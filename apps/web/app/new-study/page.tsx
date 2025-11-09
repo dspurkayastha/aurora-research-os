@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
 import {
   AURORA_RULEBOOK,
   buildBaselineSpec,
@@ -686,7 +685,6 @@ export default function NewStudyPage() {
             Aurora will keep the narrative intact while structuring downstream documents and compliance artifacts.
           </p>
         </div>
-
         <div className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <div>
             <h2 className="text-lg font-semibold text-slate-800">Sample size &amp; SAP draft</h2>
@@ -883,7 +881,7 @@ export default function NewStudyPage() {
             These numbers and analyses are AI-assisted drafts based on standard formulas and your inputs. They must be reviewed and confirmed by a qualified statistician and your ethics committee.
           </p>
         </div>
-      </section>
+
 
       <aside className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-6">
         <div>
