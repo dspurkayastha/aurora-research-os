@@ -357,4 +357,3 @@ export interface BaselinePackage {
 }
 
 export type BaselineBuildResult = BaselinePackage;
-
