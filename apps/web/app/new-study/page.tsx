@@ -719,7 +719,6 @@ export default function NewStudyPage() {
             Aurora will keep the narrative intact while structuring downstream documents and compliance artifacts.
           </p>
         </div>
-
         <div className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <div>
             <h2 className="text-lg font-semibold text-slate-800">Sample size &amp; SAP draft</h2>
@@ -1175,3 +1174,4 @@ export default function NewStudyPage() {
     </div>
   );
 }
+
