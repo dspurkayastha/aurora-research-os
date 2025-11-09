@@ -71,18 +71,24 @@ test("baseline package builder produces deterministic drafts", () => {
     "purpose",
     "procedures",
     "risks",
-    "voluntary",
-    "compensation-injury",
+    "benefits",
+    "alternatives",
+    "confidentiality",
+    "compensation_injury",
+    "voluntary_right_to_withdraw",
     "contacts",
   ].forEach((required) => assert.ok(consentSectionTitles.has(required)));
   assert.ok(result.registryMapping.fields.some((field) => field.fieldId === "ctri_public_title"));
   assert.ok(result.literaturePlan.suggestedKeywords.length > 0);
   assert.ok(result.sampleSize.status === "ok");
+  assert.equal(result.disclaimer, AURORA_RULEBOOK.disclaimers.draftNotice);
+  assert.equal(result.versionInfo.rulebookProfile, "india-v1");
+  assert.equal(result.versionInfo.rulebookVersion, AURORA_RULEBOOK.version);
 });
 
 test("regulatory checklist flags unresolved inputs", () => {
   const result = buildBaselinePackageFromIdea(idea, assumptions);
-  assert.ok(result.regulatoryChecklist.items.some((item) => item.scope === "registry"));
+  assert.ok(result.regulatoryChecklist.items.some((item) => item.id === "registry-mapping"));
 });
 
 test("plain language explanation handles incomplete sample size", () => {

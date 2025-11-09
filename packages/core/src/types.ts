@@ -25,6 +25,7 @@ export interface ValidationIssue {
   scope: ValidationScope;
   severity: ValidationSeverity;
   message: string;
+  acknowledged?: boolean;
 }
 
 export interface PreSpec {
@@ -332,21 +333,27 @@ export interface LiteraturePlan {
   notes: string[];
 }
 
+export interface BaselineVersionInfo {
+  rulebookProfile: string;
+  rulebookVersion: string;
+  generatedAt: string;
+}
+
 export interface BaselinePackage {
   studySpec: StudySpec;
-  protocol: ProtocolDraft;
+  sampleSize: SampleSizeResult;
   sap: SAPPlan;
+  protocol: ProtocolDraft;
   crf: CRFSchema;
   pisIcf: PISICFDraft;
   iecCoverNote: IECCoverNote;
   regulatoryChecklist: RegulatoryChecklist;
   registryMapping: RegistryMappingSheet;
   literaturePlan: LiteraturePlan;
-  issues: ValidationIssue[];
-}
-
-export interface BaselineBuildResult extends BaselinePackage {
-  sampleSize: SampleSizeResult;
   sapExplanation: StatsExplanation;
+  issues: ValidationIssue[];
+  disclaimer: string;
+  versionInfo: BaselineVersionInfo;
 }
 
+export type BaselineBuildResult = BaselinePackage;

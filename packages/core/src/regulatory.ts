@@ -1,170 +1,208 @@
 import type {
-  BaselinePackage,
   ChecklistItem,
   RegistryFieldMapping,
   RegistryMappingSheet,
   RegulatoryChecklist,
+  SampleSizeResult,
+  SAPPlan,
   StudySpec,
+  ProtocolDraft,
+  PISICFDraft,
+  CRFSchema,
+  LiteraturePlan,
 } from "./types";
 
-function addMissing(items: ChecklistItem[], condition: boolean, partial: ChecklistItem) {
-  if (!condition) {
-    items.push(partial);
-  }
+interface ChecklistInputs {
+  studySpec: StudySpec;
+  sampleSize: SampleSizeResult;
+  sap: SAPPlan;
+  protocol: ProtocolDraft;
+  pisIcf: PISICFDraft;
+  crf: CRFSchema;
+  registryMapping: RegistryMappingSheet;
+  literaturePlan: LiteraturePlan;
 }
 
-export function buildRegulatoryChecklist(baseline: BaselinePackage): RegulatoryChecklist {
+function checklistItem(item: ChecklistItem): ChecklistItem {
+  return item;
+}
+
+export function buildRegulatoryChecklist(inputs: ChecklistInputs): RegulatoryChecklist {
+  const { studySpec, sampleSize, sap, protocol, pisIcf, crf, registryMapping, literaturePlan } = inputs;
   const items: ChecklistItem[] = [];
-  const { studySpec, protocol, sap, crf, pisIcf, registryMapping } = baseline;
 
-  addMissing(items, Boolean(studySpec.designId), {
-    id: "design-confirmed",
-    label: "Study design confirmed in rulebook",
-    scope: "design",
-    status: "missing",
-    severity: "error",
-    notes: "Design classification must match Aurora rulebook before IEC/CTRI submission.",
-  });
+  const designSupported = Boolean(studySpec.designId);
+  items.push(
+    checklistItem({
+      id: "design-supported",
+      label: "Study design confirmed within Aurora rulebook",
+      scope: "design",
+      status: designSupported ? "ok" : "missing",
+      severity: designSupported ? "info" : "error",
+      notes: designSupported ? undefined : "Design classification must be finalised before IEC/CTRI submission.",
+    })
+  );
 
-  addMissing(items, Boolean(studySpec.primaryEndpoint), {
-    id: "primary-endpoint",
-    label: "Primary endpoint defined",
-    scope: "endpoints",
-    status: "missing",
-    severity: "critical",
-    notes: "Primary outcome required across protocol, SAP, and CRF.",
-  });
+  const primaryDefined = Boolean(studySpec.primaryEndpoint);
+  items.push(
+    checklistItem({
+      id: "primary-endpoint",
+      label: "Primary objective and outcome defined",
+      scope: "endpoints",
+      status: primaryDefined ? "ok" : "missing",
+      severity: primaryDefined ? "info" : "critical",
+      notes: primaryDefined ? undefined : "Define a single primary endpoint across protocol, SAP, and CRF.",
+    })
+  );
 
-  if (sap.endpoints.length > 0) {
-    items.push({
-      id: "sap-primary-method",
-      label: "SAP outlines primary analysis",
+  const sapReady = sap.endpoints.length > 0;
+  items.push(
+    checklistItem({
+      id: "sap-coverage",
+      label: "SAP covers all primary endpoints with deterministic methods",
       scope: "sap",
-      status: "ok",
-      severity: "info",
-    });
-  } else {
-    items.push({
-      id: "sap-primary-method",
-      label: "SAP outlines primary analysis",
-      scope: "sap",
-      status: "missing",
-      severity: "error",
-      notes: "Add deterministic endpoint plans before IEC review.",
-    });
-  }
+      status: sapReady ? "ok" : "missing",
+      severity: sapReady ? "info" : "error",
+      notes: sapReady ? undefined : "Add endpoint-specific analyses before IEC review.",
+    })
+  );
 
-  if (protocol.warnings.length > 0) {
-    items.push({
-      id: "protocol-warnings",
-      label: "Protocol warnings present",
-      scope: "protocol",
-      status: "needs-review",
-      severity: "warning",
-      notes: protocol.warnings.join("; "),
-    });
-  } else {
-    items.push({
-      id: "protocol-warnings",
-      label: "Protocol warnings present",
-      scope: "protocol",
-      status: "ok",
-      severity: "info",
-    });
-  }
+  const sampleSizeReady = sampleSize.status === "ok";
+  items.push(
+    checklistItem({
+      id: "sample-size",
+      label: "Sample size calculation documented with assumptions",
+      scope: "sample-size",
+      status: sampleSizeReady ? "ok" : "needs-review",
+      severity: sampleSizeReady ? "info" : "warning",
+      notes:
+        sampleSizeReady
+          ? undefined
+          : "Provide validated assumptions and numbers or acknowledge incomplete inputs to IEC.",
+    })
+  );
 
-  if (crf.warnings.length > 0) {
-    items.push({
-      id: "crf-warnings",
-      label: "CRF alignment",
-      scope: "crf",
-      status: "needs-review",
-      severity: "warning",
-      notes: crf.warnings.join("; "),
-    });
-  } else {
-    items.push({
-      id: "crf-warnings",
-      label: "CRF alignment",
-      scope: "crf",
-      status: "ok",
-      severity: "info",
-    });
-  }
-
-  if (pisIcf.warnings.length > 0) {
-    items.push({
-      id: "pis-icf-warnings",
-      label: "PIS/ICF completeness",
+  const consentWarnings = pisIcf.sections.length > 0 && pisIcf.warnings.length === 0;
+  items.push(
+    checklistItem({
+      id: "pis-icf",
+      label: "PIS/ICF includes mandatory ICMR consent elements",
       scope: "pis-icf",
-      status: "needs-review",
-      severity: "warning",
-      notes: pisIcf.warnings.join("; "),
-    });
-  } else {
-    items.push({
-      id: "pis-icf-warnings",
-      label: "PIS/ICF completeness",
-      scope: "pis-icf",
+      status: consentWarnings ? "ok" : "needs-review",
+      severity: consentWarnings ? "info" : "warning",
+      notes: consentWarnings ? undefined : pisIcf.warnings.join("; ") || "Complete consent sections before submission.",
+    })
+  );
+
+  const crfAligned = crf.warnings.length === 0;
+  items.push(
+    checklistItem({
+      id: "crf-alignment",
+      label: "CRF captures endpoints, consent confirmation, and safety data",
+      scope: "crf",
+      status: crfAligned ? "ok" : "needs-review",
+      severity: crfAligned ? "info" : "warning",
+      notes: crfAligned ? undefined : crf.warnings.join("; "),
+    })
+  );
+
+  const protocolWarnings = protocol.warnings.length === 0;
+  items.push(
+    checklistItem({
+      id: "protocol-integrity",
+      label: "Protocol sections populated for IEC",
+      scope: "protocol",
+      status: protocolWarnings ? "ok" : "needs-review",
+      severity: protocolWarnings ? "info" : "warning",
+      notes: protocolWarnings ? undefined : protocol.warnings.join("; "),
+    })
+  );
+
+  const registryOutstanding = registryMapping.fields.filter((field) => field.source === "pi-required");
+  items.push(
+    checklistItem({
+      id: "registry-mapping",
+      label: "CTRI-style registry mapping complete",
+      scope: "registry",
+      status: registryOutstanding.length === 0 ? "ok" : "needs-review",
+      severity: registryOutstanding.length === 0 ? "info" : "warning",
+      notes:
+        registryOutstanding.length === 0
+          ? undefined
+          : `Pending fields: ${registryOutstanding.map((field) => field.label).join(", ")}`,
+    })
+  );
+
+  const literatureReady = literaturePlan.suggestedKeywords.length > 0;
+  items.push(
+    checklistItem({
+      id: "literature-plan",
+      label: "Literature review plan prepared",
+      scope: "other",
+      status: literatureReady ? "ok" : "needs-review",
+      severity: literatureReady ? "info" : "warning",
+      notes: literatureReady ? undefined : "Add search strategy and appraisal plan before IEC submission.",
+    })
+  );
+
+  items.push(
+    checklistItem({
+      id: "draft-flag",
+      label: "All outputs explicitly marked as drafts requiring PI and IEC approval",
+      scope: "consistency",
       status: "ok",
       severity: "info",
-    });
-  }
-
-  const outstandingRegistry = registryMapping.fields.filter((field) => field.source === "pi-required");
-  if (outstandingRegistry.length > 0) {
-    items.push({
-      id: "registry-pending",
-      label: "Registry mapping pending PI inputs",
-      scope: "registry",
-      status: "needs-review",
-      severity: "warning",
-      notes: outstandingRegistry.map((field) => field.label).join(", "),
-    });
-  } else {
-    items.push({
-      id: "registry-pending",
-      label: "Registry mapping pending PI inputs",
-      scope: "registry",
-      status: "ok",
-      severity: "info",
-    });
-  }
-
-  items.push({
-    id: "draft-status",
-    label: "All outputs marked as drafts",
-    scope: "consistency",
-    status: "ok",
-    severity: "info",
-    notes: "Each artifact states it requires PI and IEC review; confirm before submission.",
-  });
+      notes: "Confirm disclaimers are retained in every exported document.",
+    })
+  );
 
   return { items };
 }
 
-export function buildRegistryMappingSheet(studySpec: StudySpec): RegistryMappingSheet {
+function mapStudyType(designId?: string): string | undefined {
+  if (!designId) return undefined;
+  if (designId === "rct-2arm-parallel" || designId === "single-arm") {
+    return "Interventional";
+  }
+  if (designId === "diagnostic-accuracy") {
+    return "Diagnostic study";
+  }
+  return "Observational";
+}
+
+function formatSecondaryEndpoints(studySpec: StudySpec): string | undefined {
+  if (studySpec.secondaryEndpoints.length === 0) {
+    return undefined;
+  }
+  return studySpec.secondaryEndpoints.map((endpoint) => endpoint.name).join("; ");
+}
+
+export function buildRegistryMappingSheet(
+  studySpec: StudySpec,
+  sampleSize: SampleSizeResult,
+  sap: SAPPlan
+): RegistryMappingSheet {
   const fields: RegistryFieldMapping[] = [
     {
       fieldId: "ctri_public_title",
       label: "Public title",
       value: studySpec.title,
       source: studySpec.title ? "auto" : "pi-required",
-      notes: "Use lay language; ensure matches IEC submission.",
+      notes: "Use lay language consistent with IEC submissions.",
     },
     {
       fieldId: "ctri_scientific_title",
       label: "Scientific title",
       value: studySpec.title,
       source: studySpec.title ? "auto" : "pi-required",
-      notes: "Provide final scientific title once approved.",
+      notes: "Provide final scientific wording once approved.",
     },
     {
       fieldId: "ctri_study_type",
       label: "Study type",
-      value: studySpec.designId ? "Interventional/Observational" : undefined,
+      value: mapStudyType(studySpec.designId),
       source: studySpec.designId ? "auto" : "pi-required",
-      notes: "Specify exact classification in CTRI form.",
+      notes: "Interventional/observational/diagnostic classification to match CTRI definitions.",
     },
     {
       fieldId: "ctri_study_design",
@@ -179,64 +217,82 @@ export function buildRegistryMappingSheet(studySpec: StudySpec): RegistryMapping
       source: studySpec.condition ? "auto" : "pi-required",
     },
     {
-      fieldId: "ctri_participant_inclusion",
+      fieldId: "ctri_inclusion",
       label: "Key inclusion criteria",
+      value: studySpec.eligibility?.inclusion?.join("; "),
       source: studySpec.eligibility?.inclusion?.length ? "auto" : "pi-required",
-      notes: "Summarise inclusion criteria drawn from protocol.",
+      notes: "Summarise exact inclusion criteria from protocol section.",
     },
     {
-      fieldId: "ctri_participant_exclusion",
+      fieldId: "ctri_exclusion",
       label: "Key exclusion criteria",
+      value: studySpec.eligibility?.exclusion?.join("; "),
       source: studySpec.eligibility?.exclusion?.length ? "auto" : "pi-required",
-      notes: "Summarise exclusion criteria drawn from protocol.",
     },
     {
       fieldId: "ctri_primary_outcome",
       label: "Primary outcome",
       value: studySpec.primaryEndpoint?.name,
       source: studySpec.primaryEndpoint ? "auto" : "pi-required",
+      notes: studySpec.primaryEndpoint?.timeframe
+        ? `Assessment timeframe: ${studySpec.primaryEndpoint.timeframe}`
+        : undefined,
     },
     {
       fieldId: "ctri_secondary_outcome",
       label: "Key secondary outcomes",
-      value: studySpec.secondaryEndpoints.map((endpoint) => endpoint.name).join("; ") || undefined,
+      value: formatSecondaryEndpoints(studySpec),
       source: studySpec.secondaryEndpoints.length > 0 ? "auto" : "pi-required",
     },
     {
       fieldId: "ctri_target_sample_size_india",
       label: "Target sample size (India)",
-      source: "pi-required",
-      notes: "Populate once sample size finalised and site list confirmed.",
+      value:
+        sampleSize.status === "ok" && typeof sampleSize.totalSampleSize === "number"
+          ? String(sampleSize.totalSampleSize)
+          : undefined,
+      source: sampleSize.status === "ok" && typeof sampleSize.totalSampleSize === "number" ? "auto" : "pi-required",
+      notes:
+        sampleSize.status === "ok"
+          ? "Update if multi-centre split required; ensure consistency with protocol."
+          : "Provide confirmed sample size before registry submission.",
     },
     {
-      fieldId: "ctri_target_sample_size_global",
-      label: "Target sample size (total)",
+      fieldId: "ctri_sample_size_global",
+      label: "Target sample size (global)",
+      value: undefined,
       source: "pi-required",
-      notes: "Complete if multi-country; else match India target.",
+      notes: "Complete if recruiting outside India; otherwise match India target.",
     },
     {
       fieldId: "ctri_sites",
       label: "Trial sites & investigators",
+      value: undefined,
       source: "pi-required",
-      notes: "Provide site names, addresses, and PI details when final.",
+      notes: "List site name, address, PI, and contact details when final.",
     },
     {
       fieldId: "ctri_randomisation",
       label: "Randomisation procedure",
-      value: studySpec.designId === "rct-2arm-parallel" ? "Randomised" : undefined,
+      value: studySpec.designId === "rct-2arm-parallel" ? "Computer-generated randomisation" : undefined,
       source: studySpec.designId === "rct-2arm-parallel" ? "auto" : "pi-required",
+      notes: studySpec.designId === "rct-2arm-parallel" ? "Describe allocation concealment in CTRI form." : undefined,
     },
     {
       fieldId: "ctri_blinding",
       label: "Blinding/masking",
+      value: undefined,
       source: "pi-required",
-      notes: "Indicate open-label, single-blind, etc., if applicable.",
+      notes: "Specify open-label, single-blind, double-blind as applicable.",
+    },
+    {
+      fieldId: "ctri_primary_analysis",
+      label: "Primary analysis method",
+      value: sap.endpoints.find((endpoint) => endpoint.role === "primary")?.testOrModel,
+      source: sap.endpoints.find((endpoint) => endpoint.role === "primary") ? "auto" : "pi-required",
+      notes: "Ensure SAP wording matches CTRI entry.",
     },
   ];
 
-  return {
-    registry: "CTRI-like",
-    fields,
-  };
+  return { registry: "CTRI-like", fields };
 }
-

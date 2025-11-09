@@ -1,49 +1,72 @@
 import type { LiteraturePlan, StudySpec } from "./types";
 
-function deriveKeywords(studySpec: StudySpec): string[] {
-  const keywords = new Set<string>();
+function keywordList(studySpec: StudySpec): string[] {
+  const baseKeywords = new Set<string>();
   if (studySpec.condition) {
-    keywords.add(studySpec.condition);
+    baseKeywords.add(studySpec.condition);
   }
   if (studySpec.populationDescription) {
-    keywords.add(studySpec.populationDescription);
+    baseKeywords.add(studySpec.populationDescription);
   }
   if (studySpec.designLabel) {
-    keywords.add(studySpec.designLabel);
+    baseKeywords.add(studySpec.designLabel);
   }
   if (studySpec.primaryEndpoint?.name) {
-    keywords.add(studySpec.primaryEndpoint.name);
+    baseKeywords.add(studySpec.primaryEndpoint.name);
   }
-  if (studySpec.primaryEndpoint?.type === "time-to-event") {
-    keywords.add("survival analysis");
+  switch (studySpec.primaryEndpoint?.type) {
+    case "time-to-event":
+      baseKeywords.add("survival analysis");
+      baseKeywords.add("hazard ratio");
+      break;
+    case "binary":
+      baseKeywords.add("risk ratio");
+      baseKeywords.add("odds ratio");
+      break;
+    case "continuous":
+      baseKeywords.add("mean difference");
+      break;
+    case "diagnostic":
+      baseKeywords.add("diagnostic accuracy");
+      baseKeywords.add("sensitivity specificity");
+      break;
+    default:
+      break;
   }
-  if (studySpec.primaryEndpoint?.type === "binary") {
-    keywords.add("risk ratio");
-  }
-  return Array.from(keywords).filter(Boolean);
+  baseKeywords.add("India");
+  baseKeywords.add("tertiary care");
+  return Array.from(baseKeywords).slice(0, 10);
 }
 
 export function buildLiteraturePlan(studySpec: StudySpec): LiteraturePlan {
-  const picoParts: string[] = [];
-  picoParts.push(`Population: ${studySpec.populationDescription ?? "to be described"}`);
-  picoParts.push(`Intervention/Exposure: ${studySpec.designId === "rct-2arm-parallel" ? "investigational arm vs control" : studySpec.designId ? "exposure per design" : "to be defined"}`);
-  picoParts.push(`Comparator: ${studySpec.designId === "rct-2arm-parallel" ? "control arm" : "context-specific"}`);
-  picoParts.push(`Outcome: ${studySpec.primaryEndpoint?.name ?? "primary endpoint to confirm"}`);
+  const picoSummary = [
+    `Population: ${studySpec.populationDescription ?? "target participants"}`,
+    `Intervention/Exposure: ${
+      studySpec.designId === "rct-2arm-parallel"
+        ? "investigational arm versus control"
+        : studySpec.designId
+        ? "exposure defined by study design"
+        : "to be detailed"
+    }`,
+    `Comparator: ${
+      studySpec.designId === "rct-2arm-parallel"
+        ? "standard care/control arm"
+        : "context-specific comparator"
+    }`,
+    `Outcome: ${studySpec.primaryEndpoint?.name ?? "primary outcome to define"}`,
+  ].join(" | ");
 
-  const suggestedKeywords = deriveKeywords(studySpec);
-  if (suggestedKeywords.length === 0) {
-    suggestedKeywords.push("clinical research", "India", "ICMR");
-  }
+  const suggestedKeywords = keywordList(studySpec);
 
   const notes = [
-    "This is a planning scaffold only. Conduct systematic searches per PRISMA/ICMR expectations.",
-    "Critically appraise identified studies before inclusion in the protocol.",
+    "Use these keywords as starting points in PubMed, IndMED, and CTRI searches.",
+    "Follow institutional SOPs for systematic reviews, screening, and bias assessment.",
+    "Document inclusion/exclusion criteria and maintain a PRISMA-style flow diagram in the protocol annex.",
   ];
 
   return {
-    picoSummary: picoParts.join(" | "),
+    picoSummary,
     suggestedKeywords,
     notes,
   };
 }
-

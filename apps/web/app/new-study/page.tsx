@@ -6,6 +6,7 @@ import {
   BaselineBuildResult,
   buildBaselineSpec,
   buildBaselinePackageFromIdea,
+  canLockAndLaunch,
   chooseDesign,
   parseIdeaToPreSpec,
 } from "@aurora/core";
@@ -495,15 +496,25 @@ function RegistryPanel({ sheet }: { sheet: RegistryMappingSheet }) {
 }
 
 function CompliancePanel({ result }: { result: BaselineBuildResult }) {
+  const gate = canLockAndLaunch(result);
+  const hasBlocking = gate.blockingIssues.length > 0;
+
   return (
     <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 shadow-sm">
       <h2 className="text-lg font-semibold text-amber-900">Compliance & Validation Issues</h2>
       <p className="mt-2 text-sm text-amber-800">
-        These deterministic checks highlight gaps that would block launch until resolved. Aurora does not grant regulatory approval.
+        These deterministic checks highlight gaps that block launch until resolved. Aurora does not grant regulatory approval.
       </p>
+      <div className="mt-3 text-sm">
+        <p className={hasBlocking ? "text-red-700" : "text-emerald-700"}>
+          {hasBlocking
+            ? "Critical issues detected. Resolve or acknowledge before export or launch."
+            : "No blocking issues detected, but PI/IEC review remains mandatory."}
+        </p>
+      </div>
       <ul className="mt-3 space-y-2">
         {result.issues.length === 0 ? (
-          <li className="text-sm text-emerald-700">No blocking issues detected, but PI/IEC review still mandatory.</li>
+          <li className="text-sm text-neutral-700">Deterministic validation checks recorded no warnings.</li>
         ) : (
           result.issues.map((issue) => (
             <li key={issue.code} className="rounded border border-amber-300 bg-white p-3 text-sm text-amber-800">
@@ -536,7 +547,8 @@ function LiteraturePanel({ plan }: { plan: LiteraturePlan }) {
         {renderList(plan.suggestedKeywords)}
       </div>
       <div className="mt-3 text-sm text-neutral-700">
-        <p>{plan.notes.join(" ")}</p>
+        <h3 className="text-sm font-medium">Execution notes</h3>
+        {renderList(plan.notes)}
       </div>
     </section>
   );
@@ -548,6 +560,8 @@ export default function NewStudyPage() {
   const [assumptions, setAssumptions] = useState<FormInputs>(INITIAL_ASSUMPTIONS);
   const [baselineResult, setBaselineResult] = useState<BaselineBuildResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const storySpec = useMemo(() => {
     if (!storyRequested || !idea.trim()) return null;
@@ -558,6 +572,8 @@ export default function NewStudyPage() {
 
   const assumptionFields = useMemo(() => getAssumptionFields(storySpec), [storySpec]);
 
+  const gate = useMemo(() => (baselineResult ? canLockAndLaunch(baselineResult) : null), [baselineResult]);
+
   const handleGenerateStory = () => {
     if (!idea.trim()) {
       setError("Please describe your study idea first.");
@@ -566,6 +582,7 @@ export default function NewStudyPage() {
     setError(null);
     setStoryRequested(true);
     setBaselineResult(null);
+    setDownloadError(null);
   };
 
   const handleAssumptionChange = (key: keyof FormInputs, value: string) => {
@@ -581,6 +598,45 @@ export default function NewStudyPage() {
     const result = buildBaselinePackageFromIdea(idea, payload);
     setBaselineResult(result);
     setError(null);
+    setDownloadError(null);
+  };
+
+  const handleDownload = async () => {
+    if (!baselineResult || !storySpec) return;
+    try {
+      setDownloading(true);
+      setDownloadError(null);
+      const payload = buildAssumptionsPayload(storySpec, assumptions);
+      const response = await fetch("/api/baseline-pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idea, assumptions: payload }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        if (response.status === 422 && data?.issues) {
+          setDownloadError("Resolve critical compliance issues before downloading the baseline pack.");
+        } else {
+          setDownloadError(data?.error ?? "Failed to download baseline pack.");
+        }
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "aurora-baseline-pack.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError("Unexpected error while preparing the baseline pack. Please try again after resolving issues.");
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -714,6 +770,49 @@ export default function NewStudyPage() {
           <LiteraturePanel plan={baselineResult.literaturePlan} />
           <CompliancePanel result={baselineResult} />
 
+          <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
+            <h2 className="text-lg font-semibold">Deterministic Baseline Pack</h2>
+            <p className="text-sm text-neutral-700">
+              Download a zip containing protocol, SAP, consent draft, CRF schema, regulatory checklist, and registry mapping. All
+              files include explicit draft disclaimers and must be reviewed by the PI and IEC.
+            </p>
+            <div className="mt-3 text-sm text-neutral-700">
+              <p>
+                Rulebook profile: <span className="font-medium">{baselineResult.versionInfo.rulebookProfile}</span> (version
+                {baselineResult.versionInfo.rulebookVersion}). Generated at {new Date(baselineResult.versionInfo.generatedAt).toLocaleString()}.
+              </p>
+              <p className="mt-1">{baselineResult.disclaimer}</p>
+            </div>
+            {gate && gate.blockingIssues.length > 0 && (
+              <div className="mt-3 rounded border border-amber-300 bg-amber-100 p-3 text-sm text-amber-800">
+                <p className="font-medium">Resolve these blocking issues before export:</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {gate.blockingIssues.map((issue) => (
+                    <li key={`blocking-${issue.code}`}>{issue.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {downloadError && <p className="mt-3 text-sm text-red-700">{downloadError}</p>}
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={!gate || !gate.allowed || downloading}
+                className={`rounded px-4 py-2 text-sm font-semibold text-white shadow ${
+                  !gate || !gate.allowed || downloading
+                    ? "cursor-not-allowed bg-neutral-400"
+                    : "bg-emerald-600 hover:bg-emerald-500"
+                }`}
+              >
+                {downloading ? "Preparing zip..." : "Download Baseline Pack"}
+              </button>
+              <span className="text-xs uppercase tracking-wide text-neutral-500">
+                Launch workspace (coming soon; unlocks after critical issues resolved)
+              </span>
+            </div>
+          </section>
+
           <section className="rounded-lg border border-red-200 bg-red-50 p-4 shadow-sm">
             <h2 className="text-lg font-semibold text-red-800">Regulatory Disclaimer</h2>
             <p className="text-sm text-red-800">
@@ -725,4 +824,3 @@ export default function NewStudyPage() {
     </main>
   );
 }
-
