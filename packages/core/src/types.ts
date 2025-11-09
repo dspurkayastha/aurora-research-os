@@ -1,7 +1,31 @@
 import type {
   StatsMethodId,
-  StudyDesignId as RulebookStudyDesignId
+  StudyDesignId as RulebookStudyDesignId,
 } from "./rulebook";
+
+export type ValidationSeverity = "info" | "warning" | "error" | "critical";
+
+export type ValidationScope =
+  | "design"
+  | "endpoints"
+  | "sample-size"
+  | "sap"
+  | "crf"
+  | "pis-icf"
+  | "protocol"
+  | "regulatory"
+  | "registry"
+  | "ethics"
+  | "safety"
+  | "consistency"
+  | "other";
+
+export interface ValidationIssue {
+  code: string;
+  scope: ValidationScope;
+  severity: ValidationSeverity;
+  message: string;
+}
 
 export interface PreSpec {
   rawIdea: string;
@@ -17,7 +41,11 @@ export interface PreSpec {
 
 export type StudyDesignId = RulebookStudyDesignId;
 
-export type HypothesisType = "superiority" | "noninferiority" | "equivalence" | "estimation";
+export type HypothesisType =
+  | "superiority"
+  | "noninferiority"
+  | "equivalence"
+  | "estimation";
 
 export type EndpointType =
   | "binary"
@@ -30,7 +58,7 @@ export type EndpointType =
 export interface EndpointSpec {
   name: string;
   type: EndpointType;
-  role: "primary" | "secondary";
+  role: "primary" | "secondary" | "exploratory";
   timeframe?: string;
   notes?: string;
 }
@@ -38,15 +66,23 @@ export interface EndpointSpec {
 export interface StudySpec {
   id?: string;
   title: string;
-  designId: StudyDesignId;
-  designLabel: string;
-  regulatoryProfileId: string;
+  designId?: StudyDesignId;
+  designLabel?: string;
   condition?: string;
-  populationDescription?: string;
   setting?: string;
-  primaryEndpoint: EndpointSpec | null;
+  populationDescription?: string;
+  primaryEndpoint?: EndpointSpec | null;
   secondaryEndpoints: EndpointSpec[];
-  isAdvancedDesign: boolean;
+  objectives?: {
+    primary?: string[];
+    secondary?: string[];
+  };
+  eligibility?: {
+    inclusion?: string[];
+    exclusion?: string[];
+  };
+  visitScheduleSummary?: string;
+  regulatoryProfileId: string;
   notes: string[];
   source: { fromRulebookVersion: string };
 }
@@ -72,6 +108,8 @@ export interface SampleSizeAssumptionsBase {
   caseControlRatio?: number;
   exposurePrevInControls?: number;
   targetMetric?: "sensitivity" | "specificity" | "both";
+  expectedSensitivity?: number;
+  expectedSpecificity?: number;
   notes?: string[];
 }
 
@@ -129,27 +167,6 @@ export interface SampleSizeResult {
   notes: string[];
 }
 
-export interface SAPAnalysisStep {
-  label: string;
-  population: "full" | "per-protocol" | "safety" | "not-applicable";
-  endpointRole: "primary" | "secondary";
-  endpointName: string;
-  testOrModel: string;
-  effectMeasure?: string;
-  adjusted?: boolean;
-  notes?: string;
-}
-
-export interface SAPPlan {
-  primaryMethodId?: StatsMethodId;
-  steps: SAPAnalysisStep[];
-  multiplicityHandling?: string;
-  missingDataHandling?: string;
-  software?: string;
-  warnings: string[];
-  notes: string[];
-}
-
 export interface StatsExplanation {
   sampleSizeSummary: string;
   analysisSummary: string;
@@ -161,19 +178,48 @@ export interface ProtocolSection {
   id: string;
   title: string;
   required: boolean;
-  dependsOn?: string[];
-  contentTemplate: string;
+  content: string;
 }
 
 export interface ProtocolDraft {
-  studyId?: string;
   title: string;
-  designId: StudyDesignId;
+  shortTitle?: string;
+  versionTag: string;
   sections: ProtocolSection[];
   warnings: string[];
 }
 
-export type CrfFieldType =
+export interface SAPEndpointPlan {
+  endpointName: string;
+  role: "primary" | "key-secondary" | "secondary";
+  type: EndpointType;
+  estimand?: string;
+  hypothesis?: string;
+  alphaAllocation?: number;
+  testOrModel: string;
+  effectMeasure?: string;
+  covariates?: string[];
+  missingDataApproach?: string;
+  notes?: string;
+}
+
+export interface SAPPlan {
+  analysisSets: {
+    fullAnalysisSet: string;
+    perProtocolSet?: string;
+    safetySet?: string;
+  };
+  endpoints: SAPEndpointPlan[];
+  multiplicity: string;
+  interimAnalysis: string;
+  subgroupAnalyses: string;
+  sensitivityAnalyses: string;
+  missingDataGeneral: string;
+  software: string;
+  warnings: string[];
+}
+
+export type CRFFieldType =
   | "text"
   | "number"
   | "date"
@@ -183,27 +229,37 @@ export type CrfFieldType =
   | "checkbox"
   | "textarea";
 
-export interface CrfField {
+export interface CRFField {
   id: string;
   label: string;
-  type: CrfFieldType;
+  type: CRFFieldType;
   required: boolean;
+  mapsToEndpointName?: string;
+  isCore: boolean;
   options?: string[];
   unit?: string;
   notes?: string;
-  core?: boolean;
 }
 
-export interface CrfForm {
+export type CRFFormPurpose =
+  | "screening"
+  | "baseline"
+  | "treatment"
+  | "followup"
+  | "outcome"
+  | "ae-safety"
+  | "other";
+
+export interface CRFForm {
   id: string;
-  title: string;
+  name: string;
   visitLabel?: string;
-  fields: CrfField[];
+  purpose: CRFFormPurpose;
+  fields: CRFField[];
 }
 
-export interface CrfSchema {
-  studyId?: string;
-  forms: CrfForm[];
+export interface CRFSchema {
+  forms: CRFForm[];
   warnings: string[];
 }
 
@@ -222,47 +278,75 @@ export type PisIcfClauseCategory =
   | "vulnerable_populations"
   | "misc";
 
-export interface PisIcfClause {
+export interface PISICFSection {
   id: string;
-  category: PisIcfClauseCategory;
+  title: string;
   required: boolean;
-  contentTemplate: string;
+  content: string;
 }
 
-export interface PisIcfDraft {
-  studyId?: string;
-  language: "en";
-  clauses: PisIcfClause[];
+export interface PISICFDraft {
+  sections: PISICFSection[];
   warnings: string[];
 }
 
-export type RegulatoryTarget = "CTRI" | "IEC" | "ICMR" | "LOCAL";
+export interface IECCoverNote {
+  title: string;
+  summary: string;
+  designAndMethods: string;
+  riskBenefit: string;
+  keyEthicsHighlights: string;
+  attachmentsList: string[];
+  warnings: string[];
+}
 
-export interface RegulatoryFieldMapping {
-  target: RegulatoryTarget;
-  fieldId: string;
+export interface ChecklistItem {
+  id: string;
   label: string;
-  required: boolean;
-  sourceHint?: string;
+  scope: ValidationScope;
+  status: "ok" | "missing" | "needs-review";
+  severity: ValidationSeverity;
+  notes?: string;
 }
 
 export interface RegulatoryChecklist {
-  studyId?: string;
-  mappings: RegulatoryFieldMapping[];
-  missing: string[];
-  warnings: string[];
+  items: ChecklistItem[];
 }
 
-export interface LiteratureQuestion {
-  id: string;
+export interface RegistryFieldMapping {
+  fieldId: string;
   label: string;
-  description: string;
+  value?: string;
+  source: "auto" | "pi-required";
+  notes?: string;
+}
+
+export interface RegistryMappingSheet {
+  registry: "CTRI-like";
+  fields: RegistryFieldMapping[];
 }
 
 export interface LiteraturePlan {
-  studyId?: string;
-  questions: LiteratureQuestion[];
+  picoSummary: string;
   suggestedKeywords: string[];
-  tableTemplate: string[];
-  warnings: string[];
+  notes: string[];
 }
+
+export interface BaselinePackage {
+  studySpec: StudySpec;
+  protocol: ProtocolDraft;
+  sap: SAPPlan;
+  crf: CRFSchema;
+  pisIcf: PISICFDraft;
+  iecCoverNote: IECCoverNote;
+  regulatoryChecklist: RegulatoryChecklist;
+  registryMapping: RegistryMappingSheet;
+  literaturePlan: LiteraturePlan;
+  issues: ValidationIssue[];
+}
+
+export interface BaselineBuildResult extends BaselinePackage {
+  sampleSize: SampleSizeResult;
+  sapExplanation: StatsExplanation;
+}
+

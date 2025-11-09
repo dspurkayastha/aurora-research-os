@@ -1,66 +1,94 @@
-import { AURORA_RULEBOOK, STATS_METHODS } from "./rulebook";
+import { STATS_METHODS } from "./rulebook";
 import type {
-  SAPAnalysisStep,
+  EndpointSpec,
+  SAPEndpointPlan,
   SAPPlan,
   SampleSizeResult,
   StatsExplanation,
-  StudySpec
+  StudySpec,
 } from "./types";
 
-function cloneWarnings(warnings: string[] | undefined): string[] {
-  return warnings ? [...warnings] : [];
-}
+const DEFAULT_ANALYSIS_SETS = {
+  fullAnalysisSet:
+    "All enrolled participants meeting eligibility criteria with at least one post-baseline assessment.",
+  perProtocolSet:
+    "Participants without major protocol deviations impacting the primary endpoint (to be defined by PI/statistician).",
+  safetySet: "All participants exposed to study intervention or undergoing study procedures.",
+};
 
-function findMethodLabel(methodId: string | undefined): string | undefined {
-  if (!methodId) {
-    return undefined;
+const METHOD_LABELS: Record<string, string> = Object.fromEntries(
+  STATS_METHODS.map((method) => [method.id, method.label])
+);
+
+function mapTestOrModel(designId: string | undefined, endpoint: EndpointSpec): {
+  plan: SAPEndpointPlan;
+  warning?: string;
+} {
+  const basePlan: Omit<SAPEndpointPlan, "role" | "endpointName" | "type"> = {
+    estimand: undefined,
+    hypothesis: undefined,
+    alphaAllocation: undefined,
+    testOrModel: "Analysis approach to be specified by statistician",
+    effectMeasure: undefined,
+    covariates: undefined,
+    missingDataApproach: undefined,
+    notes: undefined,
+  };
+
+  const makePlan = (overrides: Partial<SAPEndpointPlan>): SAPEndpointPlan => ({
+    endpointName: endpoint.name,
+    role: endpoint.role === "primary" ? "primary" : endpoint.role === "secondary" ? "secondary" : "secondary",
+    type: endpoint.type,
+    ...basePlan,
+    ...overrides,
+  });
+
+  if (!designId) {
+    return {
+      plan: makePlan({
+        testOrModel: "Design not finalised; statistician to specify confirmatory method.",
+        notes: "Study design pending confirmation; SAP requires PI/statistician input.",
+      }),
+      warning: "Design not confirmed; SAP endpoints recorded as placeholders.",
+    };
   }
-  return STATS_METHODS.find((method) => method.id === methodId)?.label;
-}
 
-function buildPrimaryStep(studySpec: StudySpec): SAPAnalysisStep | null {
-  const endpoint = studySpec.primaryEndpoint;
-  if (!endpoint) {
-    return null;
-  }
-
-  const labelBase = `Primary analysis: ${endpoint.name}`;
-
-  switch (studySpec.designId) {
+  switch (designId) {
     case "rct-2arm-parallel": {
       if (endpoint.type === "binary") {
         return {
-          label: "Primary analysis: compare event proportions between arms",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Chi-square test or Fisher's exact test (as appropriate)",
-          effectMeasure: "Risk ratio and risk difference with 95% CI",
-          adjusted: true,
-          notes: "Adjust for stratification or key covariates if prespecified."
+          plan: makePlan({
+            testOrModel: "Chi-square test or Fisher's exact test as appropriate",
+            effectMeasure: "Risk ratio and risk difference with 95% confidence interval",
+            covariates: ["stratification factors if used", "key baseline covariates"],
+            missingDataApproach: "Multiple imputation or worst-case sensitivity analysis for missing outcomes.",
+            estimand: "Treatment difference in proportion achieving outcome",
+            hypothesis: "Superiority of investigational arm over control",
+          }),
         };
       }
       if (endpoint.type === "continuous") {
         return {
-          label: "Primary analysis: compare mean outcomes between arms",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Two-sample t-test (or non-parametric alternative if assumptions violated)",
-          effectMeasure: "Mean difference with 95% CI",
-          adjusted: false
+          plan: makePlan({
+            testOrModel: "Two-sample t-test (non-parametric alternative if assumptions violated)",
+            effectMeasure: "Mean difference with 95% confidence interval",
+            covariates: ["baseline value of outcome if available"],
+            missingDataApproach: "Mixed models or multiple imputation depending on visit pattern.",
+            estimand: "Difference in mean outcome between arms at specified time point",
+            hypothesis: "Superiority of investigational arm over control",
+          }),
         };
       }
       if (endpoint.type === "time-to-event") {
         return {
-          label: "Primary analysis: compare time-to-event outcomes between arms",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Log-rank test",
-          effectMeasure: "Hazard ratio from Cox proportional hazards model with 95% CI",
-          adjusted: true,
-          notes: "Assess proportional hazards assumption and report Kaplan–Meier curves."
+          plan: makePlan({
+            testOrModel: "Log-rank test with Cox proportional hazards model",
+            effectMeasure: "Hazard ratio with 95% confidence interval",
+            covariates: ["stratification factors", "key prognostic covariates"],
+            missingDataApproach: "Censor at last known follow-up; sensitivity analyses for informative censoring.",
+            estimand: "Time-to-event difference between arms",
+            hypothesis: "Superiority of investigational arm over control",
+          }),
         };
       }
       break;
@@ -69,37 +97,38 @@ function buildPrimaryStep(studySpec: StudySpec): SAPAnalysisStep | null {
     case "retrospective-cohort": {
       if (endpoint.type === "binary") {
         return {
-          label: "Primary analysis: assess association between exposure and binary outcome",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Log-binomial or logistic regression depending on convergence",
-          effectMeasure: "Risk ratio or odds ratio with 95% CI",
-          adjusted: true,
-          notes: "Adjust for key confounders based on protocol and data availability."
+          plan: makePlan({
+            testOrModel: "Log-binomial or logistic regression (depending on convergence)",
+            effectMeasure: "Risk ratio or odds ratio with 95% confidence interval",
+            covariates: ["a priori confounders", "site or cluster if applicable"],
+            missingDataApproach: "Complete case with sensitivity analyses using multiple imputation.",
+            estimand: "Association between exposure and binary outcome",
+            hypothesis: "Assess direction and magnitude of association",
+          }),
         };
       }
       if (endpoint.type === "continuous") {
         return {
-          label: "Primary analysis: compare mean outcome across exposure groups",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Linear regression with exposure as primary predictor",
-          effectMeasure: "Adjusted mean difference with 95% CI",
-          adjusted: true
+          plan: makePlan({
+            testOrModel: "Linear regression with exposure and confounders",
+            effectMeasure: "Adjusted mean difference with 95% confidence interval",
+            covariates: ["pre-specified confounders"],
+            missingDataApproach: "Multiple imputation if data are missing at random; otherwise sensitivity analyses.",
+            estimand: "Difference in mean outcome by exposure status",
+            hypothesis: "Assess association between exposure and continuous outcome",
+          }),
         };
       }
       if (endpoint.type === "time-to-event") {
         return {
-          label: "Primary analysis: evaluate time-to-event differences across exposures",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Cox proportional hazards model with Kaplan–Meier curves",
-          effectMeasure: "Hazard ratio with 95% CI",
-          adjusted: true,
-          notes: "Assess proportional hazards and consider competing risks if relevant."
+          plan: makePlan({
+            testOrModel: "Cox proportional hazards model with Kaplan–Meier estimates",
+            effectMeasure: "Hazard ratio with 95% confidence interval",
+            covariates: ["key confounders"],
+            missingDataApproach: "Censor at last follow-up; assess for informative censoring.",
+            estimand: "Association between exposure and time-to-event",
+            hypothesis: "Assess association magnitude",
+          }),
         };
       }
       break;
@@ -107,73 +136,74 @@ function buildPrimaryStep(studySpec: StudySpec): SAPAnalysisStep | null {
     case "cross-sectional": {
       if (endpoint.type === "binary") {
         return {
-          label: "Primary analysis: estimate prevalence or compare proportions",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Chi-square test / proportion estimate with 95% CI",
-          effectMeasure: "Prevalence or risk difference with 95% CI",
-          adjusted: false
+          plan: makePlan({
+            testOrModel: "Estimate prevalence and compare proportions using chi-square / exact tests",
+            effectMeasure: "Prevalence with 95% confidence interval",
+            covariates: ["demographic or clinical factors if modelling"],
+            missingDataApproach: "Report missingness and perform sensitivity analyses if >5% missing.",
+            estimand: "Prevalence or proportion difference",
+            hypothesis: "Describe prevalence / compare subgroups",
+          }),
         };
       }
       if (endpoint.type === "continuous") {
         return {
-          label: "Primary analysis: compare mean values across groups",
-          population: "full",
-          endpointRole: "primary",
-          endpointName: endpoint.name,
-          testOrModel: "Two-sample t-test or ANOVA as applicable",
-          effectMeasure: "Mean difference with 95% CI",
-          adjusted: false
+          plan: makePlan({
+            testOrModel: "Two-sample t-test / ANOVA or non-parametric equivalent",
+            effectMeasure: "Mean difference with 95% confidence interval",
+            covariates: ["key demographic factors"],
+            missingDataApproach: "Report missingness; consider imputation for key variables.",
+            estimand: "Difference in mean measurement across groups",
+            hypothesis: "Describe distribution / compare subgroups",
+          }),
         };
       }
       break;
     }
     case "single-arm": {
       return {
-        label: "Primary analysis: estimate single-arm response proportion",
-        population: "full",
-        endpointRole: "primary",
-        endpointName: endpoint.name,
-        testOrModel: "Binomial proportion with exact or Wilson 95% CI",
-        effectMeasure: "Point estimate with confidence interval",
-        adjusted: false
+        plan: makePlan({
+          testOrModel: "Binomial proportion with exact/Wilson 95% confidence interval",
+          effectMeasure: "Response rate with 95% confidence interval",
+          missingDataApproach: "Include only participants with outcome assessment; describe missingness.",
+          estimand: "Response proportion in target population",
+          hypothesis: "Estimate response proportion with specified precision",
+        }),
       };
     }
     case "diagnostic-accuracy": {
       return {
-        label: "Primary analysis: evaluate diagnostic accuracy",
-        population: "full",
-        endpointRole: "primary",
-        endpointName: endpoint.name,
-        testOrModel: "Estimate sensitivity, specificity, predictive values, and ROC curve",
-        effectMeasure: "Sensitivity, specificity, predictive values with 95% CI",
-        adjusted: false,
-        notes: "Document index test, reference standard, and any indeterminate handling."
-      };
-    }
-    case "case-control": {
-      return {
-        label: "Primary analysis: estimate association between exposure and odds of outcome",
-        population: "full",
-        endpointRole: "primary",
-        endpointName: endpoint.name,
-        testOrModel: "Logistic regression",
-        effectMeasure: "Odds ratio with 95% CI",
-        adjusted: true,
-        notes: "Include matching factors or confounders as covariates."
+        plan: makePlan({
+          testOrModel: "Estimate sensitivity, specificity, predictive values, ROC curve",
+          effectMeasure: "Sensitivity, specificity, predictive values with 95% confidence intervals",
+          missingDataApproach: "Specify handling of indeterminate index test or missing reference standard.",
+          estimand: "Accuracy metrics of index test versus reference standard",
+          hypothesis: "Estimation of diagnostic accuracy",
+        }),
       };
     }
     case "registry": {
       return {
-        label: "Primary analysis: descriptive registry summaries",
-        population: "full",
-        endpointRole: "primary",
-        endpointName: endpoint.name,
-        testOrModel: "Descriptive statistics with trend monitoring",
-        effectMeasure: "Summary measures with 95% CI where applicable",
-        adjusted: false,
-        notes: "Registry analyses typically emphasise longitudinal trends and data completeness."
+        plan: makePlan({
+          testOrModel: "Descriptive summaries with trend monitoring",
+          effectMeasure: "Counts, proportions, medians with confidence intervals where relevant",
+          missingDataApproach: "Track data completeness per site; implement data quality queries.",
+          estimand: "Routine registry indicators over time",
+          hypothesis: "Descriptive monitoring",
+        }),
+        warning: "Registry analyses are typically feasibility-driven; confirm objectives with PI.",
+      };
+    }
+    case "case-control": {
+      return {
+        plan: makePlan({
+          testOrModel: "Logistic regression adjusting for matching/stratification",
+          effectMeasure: "Odds ratio with 95% confidence interval",
+          covariates: ["matching factors", "key confounders"],
+          missingDataApproach: "Perform complete-case analysis with sensitivity analyses.",
+          estimand: "Association between exposure and odds of outcome",
+          hypothesis: "Assess association magnitude",
+        }),
       };
     }
     default:
@@ -181,158 +211,162 @@ function buildPrimaryStep(studySpec: StudySpec): SAPAnalysisStep | null {
   }
 
   return {
-    label: labelBase,
-    population: "full",
-    endpointRole: "primary",
-    endpointName: endpoint.name,
-    testOrModel: "Analysis approach to be confirmed by statistician",
-    adjusted: false,
-    notes: "No deterministic template available for this design-endpoint combination."
+    plan: makePlan({
+      testOrModel: "Method to be defined by statistician",
+      notes: "Deterministic catalogue has no template for this combination; escalate to PI/statistician.",
+    }),
+    warning: `No deterministic SAP mapping for design ${designId} with endpoint type ${endpoint.type}.`,
   };
 }
 
-export function buildSAPPlan(studySpec: StudySpec, ss: SampleSizeResult): SAPPlan {
-  const steps: SAPAnalysisStep[] = [];
+function buildEndpointPlans(
+  studySpec: StudySpec,
+  warnings: string[]
+): SAPEndpointPlan[] {
+  const endpoints: EndpointSpec[] = [];
+  if (studySpec.primaryEndpoint) {
+    endpoints.push({ ...studySpec.primaryEndpoint, role: "primary" });
+  }
+  for (const secondary of studySpec.secondaryEndpoints) {
+    endpoints.push({ ...secondary, role: secondary.role ?? "secondary" });
+  }
+
+  if (endpoints.length === 0) {
+    warnings.push("No endpoints defined; SAP is a placeholder draft.");
+    return [];
+  }
+
+  return endpoints.map((endpoint) => {
+    const { plan, warning } = mapTestOrModel(studySpec.designId, endpoint);
+    if (warning) {
+      warnings.push(warning);
+    }
+    if (plan.role === "primary" && studySpec.primaryEndpoint && endpoint.name === studySpec.primaryEndpoint.name) {
+      plan.alphaAllocation = 0.05;
+    }
+    return plan;
+  });
+}
+
+export function buildSAPPlan(studySpec: StudySpec, sampleSize: SampleSizeResult): SAPPlan {
   const warnings: string[] = [];
-  const notes: string[] = [];
 
-  const primaryStep = buildPrimaryStep(studySpec);
-  if (primaryStep) {
-    steps.push(primaryStep);
-  } else {
-    warnings.push("Primary endpoint missing; SAP requires clarification.");
+  if (!studySpec.designId) {
+    warnings.push("Design not finalised; SAP entries are provisional.");
   }
 
-  for (const endpoint of studySpec.secondaryEndpoints) {
-    steps.push({
-      label: `Secondary analysis: ${endpoint.name}`,
-      population: "full",
-      endpointRole: "secondary",
-      endpointName: endpoint.name,
-      testOrModel: "Appropriate model per endpoint type (exploratory)",
-      adjusted: false
-    });
+  if (!studySpec.primaryEndpoint) {
+    warnings.push("Primary endpoint missing; confirm before finalising SAP.");
   }
 
-  const multiplicityHandling =
-    "Primary endpoint analysed at two-sided alpha 0.05; secondary endpoints are exploratory unless prespecified otherwise.";
-  const missingDataHandling =
-    "Primary analysis based on available data (complete cases); perform sensitivity analyses as feasible.";
-  const software = "R / Python / SAS / Stata — final choice by PI or statistician.";
-
-  if (ss.status !== "ok") {
+  if (sampleSize.status !== "ok") {
     warnings.push(
-      "Sample size not finalised; SAP remains a draft and must be confirmed by a qualified statistician."
+      "Sample size assumptions incomplete or unsupported; confirm calculations before locking SAP."
     );
   }
 
-  const primaryMethodId = ss.status === "ok" ? ss.methodId : undefined;
+  const endpointPlans = buildEndpointPlans(studySpec, warnings);
 
   return {
-    primaryMethodId,
-    steps,
-    multiplicityHandling,
-    missingDataHandling,
-    software,
-    warnings: [...warnings, ...cloneWarnings(ss.warnings)],
-    notes: [...notes, ...ss.notes]
+    analysisSets: { ...DEFAULT_ANALYSIS_SETS },
+    endpoints: endpointPlans,
+    multiplicity:
+      "Primary endpoint tested at two-sided alpha 0.05. Secondary endpoints exploratory unless alpha allocation specified.",
+    interimAnalysis: "No formal interim analyses planned unless specified by PI/statistician.",
+    subgroupAnalyses: "Exploratory subgroup analyses based on pre-specified demographic or clinical factors.",
+    sensitivityAnalyses:
+      "Perform sensitivity analyses for missing data assumptions, protocol deviations, and alternative model specifications.",
+    missingDataGeneral:
+      "Document missing data patterns. Apply multiple imputation or sensitivity analyses where material to conclusions.",
+    software: "R / Python / SAS / Stata — final selection by responsible statistician.",
+    warnings,
   };
-}
-
-function buildAssumptionSummary(ss: SampleSizeResult): string {
-  const a = ss.assumptions;
-  const parts: string[] = [];
-
-  parts.push(`Alpha ${a.alpha} (${a.twoSided ? "two-sided" : "one-sided"}) and power ${a.power}.`);
-
-  if (typeof a.expectedControlEventRate === "number" || typeof a.expectedTreatmentEventRate === "number") {
-    parts.push(
-      `Expected control event rate ${a.expectedControlEventRate ?? "?"}, treatment event rate ${a.expectedTreatmentEventRate ?? "?"}.`
-    );
-  }
-  if (typeof a.expectedMeanControl === "number" || typeof a.expectedMeanTreatment === "number") {
-    parts.push(
-      `Expected mean control ${a.expectedMeanControl ?? "?"}, treatment ${a.expectedMeanTreatment ?? "?"}.`
-    );
-  }
-  if (typeof a.assumedSD === "number") {
-    parts.push(`Assumed standard deviation ${a.assumedSD}.`);
-  }
-  if (typeof a.hazardRatio === "number") {
-    parts.push(`Target hazard ratio ${a.hazardRatio}.`);
-  }
-  if (typeof a.eventProportionDuringFollowUp === "number") {
-    parts.push(`Expected event proportion during follow-up ${a.eventProportionDuringFollowUp}.`);
-  }
-  if (typeof a.expectedProportion === "number") {
-    parts.push(`Expected proportion ${a.expectedProportion}.`);
-  }
-  if (typeof a.precision === "number") {
-    parts.push(`Desired half-width of confidence interval ${a.precision}.`);
-  }
-  if (typeof a.dropoutRate === "number") {
-    parts.push(`Dropout rate ${a.dropoutRate}.`);
-  }
-  if (typeof a.clusterDesignEffect === "number") {
-    parts.push(`Cluster design effect ${a.clusterDesignEffect}.`);
-  }
-
-  return parts.join(" ");
-}
-
-function buildAnalysisSummary(plan: SAPPlan): string {
-  if (plan.steps.length === 0) {
-    return "Analysis plan pending statistician input.";
-  }
-
-  const primary = plan.steps[0];
-  return `${primary.label}. Planned method: ${primary.testOrModel}.`;
 }
 
 export function generatePlainLanguageStatsExplanation(
   studySpec: StudySpec,
-  ss: SampleSizeResult,
+  sampleSize: SampleSizeResult,
   sap: SAPPlan
 ): StatsExplanation {
-  const caveats = [
-    "If actual event rates or variances differ from assumptions, achieved power will change.",
-    "A qualified statistician must review and confirm these calculations before use.",
-    AURORA_RULEBOOK.disclaimers.draftNotice
-  ];
-
-  if (ss.status !== "ok") {
-    const summary =
-      "The system could not safely compute a sample size with the information provided. " +
-      `Status: ${ss.status}.`;
-    const assumptionSummary = buildAssumptionSummary(ss);
-    const analysisSummary = buildAnalysisSummary(sap);
-    const caveatList = [...caveats, "Provide the missing inputs or consult a statistician."];
-
+  if (sampleSize.status !== "ok") {
     return {
-      sampleSizeSummary: summary,
-      analysisSummary,
-      assumptionSummary,
-      caveats: caveatList
+      sampleSizeSummary:
+        "The system could not safely compute a sample size with the current information. Please provide complete assumptions or consult a statistician.",
+      analysisSummary:
+        "The draft SAP outlines default analytical approaches for the defined endpoints. These remain placeholders until a statistician confirms the design and methods.",
+      assumptionSummary:
+        "Key inputs such as event rates, effect size, or follow-up expectations are missing or inconsistent.",
+      caveats: [
+        "A qualified statistician must review assumptions, methods, and feasibility before any submission.",
+        "No numerical sample size has been locked in this draft.",
+      ],
     };
   }
 
-  const methodLabel = findMethodLabel(ss.methodId);
-  const total = ss.totalSampleSize ? `Total sample size ${ss.totalSampleSize}.` : "";
-  const perGroup = ss.perGroupSampleSize
-    ? `Per group sample size ${ss.perGroupSampleSize}.`
-    : "";
-  const eventSummary = ss.eventsRequired ? `Events required ${ss.eventsRequired}.` : "";
-  const sampleSizeSummary =
-    `${methodLabel ?? "Sample size"} calculation complete. ${total} ${perGroup} ${eventSummary}`.trim();
+  const methodLabel = sampleSize.methodId ? METHOD_LABELS[sampleSize.methodId] : undefined;
+  const sampleSizeFragments: string[] = [];
+  if (sampleSize.totalSampleSize) {
+    sampleSizeFragments.push(`Total sample size ${sampleSize.totalSampleSize}`);
+  }
+  if (sampleSize.perGroupSampleSize) {
+    sampleSizeFragments.push(`Per-group ${sampleSize.perGroupSampleSize}`);
+  }
+  if (sampleSize.eventsRequired) {
+    sampleSizeFragments.push(`Events required ${sampleSize.eventsRequired}`);
+  }
 
-  const analysisSummary = buildAnalysisSummary(sap);
-  const assumptionSummary = buildAssumptionSummary(ss);
-  const caveatList = [...caveats, ...(ss.notes.length ? ss.notes : [])];
+  const assumptions: string[] = [];
+  if (typeof sampleSize.assumptions.expectedControlEventRate === "number") {
+    assumptions.push(
+      `Control event rate ${Math.round(sampleSize.assumptions.expectedControlEventRate * 100)}%`
+    );
+  }
+  if (typeof sampleSize.assumptions.expectedTreatmentEventRate === "number") {
+    assumptions.push(
+      `Treatment event rate ${Math.round(sampleSize.assumptions.expectedTreatmentEventRate * 100)}%`
+    );
+  }
+  if (typeof sampleSize.assumptions.expectedProportion === "number") {
+    assumptions.push(
+      `Expected proportion ${(sampleSize.assumptions.expectedProportion * 100).toFixed(1)}%`
+    );
+  }
+  if (typeof sampleSize.assumptions.assumedSD === "number") {
+    assumptions.push(`Assumed standard deviation ${sampleSize.assumptions.assumedSD}`);
+  }
+  if (typeof sampleSize.assumptions.precision === "number") {
+    assumptions.push(`Precision target ±${sampleSize.assumptions.precision}`);
+  }
+  if (typeof sampleSize.assumptions.hazardRatio === "number") {
+    assumptions.push(`Hazard ratio ${sampleSize.assumptions.hazardRatio}`);
+  }
+  if (typeof sampleSize.assumptions.eventProportionDuringFollowUp === "number") {
+    assumptions.push(
+      `Event proportion during follow-up ${(sampleSize.assumptions.eventProportionDuringFollowUp * 100).toFixed(1)}%`
+    );
+  }
+  if (typeof sampleSize.assumptions.dropoutRate === "number") {
+    assumptions.push(`Dropout allowance ${(sampleSize.assumptions.dropoutRate * 100).toFixed(1)}%`);
+  }
 
   return {
-    sampleSizeSummary,
-    analysisSummary,
-    assumptionSummary,
-    caveats: caveatList
+    sampleSizeSummary: [
+      methodLabel ? `${methodLabel} selected.` : undefined,
+      sampleSizeFragments.length ? sampleSizeFragments.join(", ") : undefined,
+      `Alpha ${sampleSize.assumptions.alpha}, power ${sampleSize.assumptions.power}.`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    analysisSummary:
+      sap.endpoints.length > 0
+        ? `Primary analysis uses ${sap.endpoints[0].testOrModel}. Secondary endpoints are exploratory unless multiplicity adjustments are defined.`
+        : "No confirmed endpoints; SAP requires statistician input.",
+    assumptionSummary: assumptions.length
+      ? `Key assumptions: ${assumptions.join(", " )}.`
+      : "Explicit effect size or event rate assumptions were not captured; confirm before submission.",
+    caveats: [
+      "If true rates or variances differ, actual power may change.",
+      "A qualified statistician and the PI must review and approve these calculations before use.",
+    ],
   };
 }

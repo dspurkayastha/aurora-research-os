@@ -37,9 +37,9 @@ test("buildBaselineSpec produces aligned study spec", () => {
   const designId = chooseDesign(preSpec);
   const studySpec = buildBaselineSpec(preSpec, designId);
 
-  assert.ok(studySpec.designLabel.length > 0);
+  assert.ok(studySpec.designLabel && studySpec.designLabel.length > 0);
   assert.equal(studySpec.regulatoryProfileId, AURORA_RULEBOOK.defaultRegulatoryProfileId);
   assert.ok(studySpec.primaryEndpoint);
   assert.equal(studySpec.primaryEndpoint?.role, "primary");
-  assert.equal(studySpec.isAdvancedDesign, false);
+  assert.equal(studySpec.notes.includes("Primary endpoint not clearly identified; must be defined by PI."), false);
 });

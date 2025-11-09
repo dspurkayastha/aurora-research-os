@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { AURORA_RULEBOOK } from "@aurora/core";
+import { AURORA_RULEBOOK, buildBaselinePackageFromIdea } from "@aurora/core";
 
 const router = Router();
 
@@ -24,6 +24,21 @@ router.get("/rulebook/summary", (_req, res) => {
   };
 
   res.json(summary);
+});
+
+router.post("/preview/baseline", (req, res) => {
+  const { idea, assumptions } = req.body ?? {};
+
+  if (typeof idea !== "string" || idea.trim().length === 0) {
+    return res.status(400).json({ error: "idea is required" });
+  }
+
+  try {
+    const baseline = buildBaselinePackageFromIdea(idea, assumptions);
+    res.json(baseline);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate baseline package", details: `${error}` });
+  }
 });
 
 export { router };

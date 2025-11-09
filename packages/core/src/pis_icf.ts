@@ -1,137 +1,109 @@
-import type { PisIcfClause, PisIcfDraft, SAPPlan, SampleSizeResult, StudySpec } from "./types";
+import type { PISICFDraft, PISICFSection, StudySpec } from "./types";
 
-const BASE_CLAUSES: PisIcfClause[] = [
+const SECTION_BUILDERS: { id: string; title: string; content: (spec: StudySpec) => string }[] = [
   {
-    id: "intro-statement",
-    category: "intro",
-    required: true,
-    contentTemplate:
-      "You are invited to consider participation in the research study titled {{studyTitle}} being conducted at {{siteName}}.",
+    id: "intro",
+    title: "Introduction",
+    content: (spec) =>
+      `You are invited to consider participation in a research study titled "${spec.title}" conducted at ${
+        spec.setting ?? "the study site"
+      }. This document summarises what participation involves.`,
   },
   {
     id: "purpose",
-    category: "purpose",
-    required: true,
-    contentTemplate:
-      "Explain in plain language why the study is being conducted and how it relates to {{condition}} or the health question being addressed.",
+    title: "Purpose of the Study",
+    content: (spec) =>
+      `Explain the purpose: to evaluate ${spec.primaryEndpoint?.name ?? "the study objectives"} in ${
+        spec.populationDescription ?? "the target population"
+      }. Clarify that this is research, not routine care.`,
   },
   {
     id: "procedures",
-    category: "procedures",
-    required: true,
-    contentTemplate:
-      "Describe what participation involves, including number of visits, procedures, tests, and approximate duration for each visit.",
+    title: "Study Procedures & Duration",
+    content: (spec) =>
+      `Describe required visits, assessments, and procedures. Indicate expected number of visits and overall duration (${spec.visitScheduleSummary ?? "to be defined"}).`,
   },
   {
     id: "risks",
-    category: "risks",
-    required: true,
-    contentTemplate:
-      "List potential risks, discomforts, or inconveniences. Include monitoring and emergency contact pathways for participants.",
+    title: "Foreseeable Risks & Discomforts",
+    content: () =>
+      "List known and anticipated risks or discomforts. Include instructions for reporting side effects or concerns to the study team.",
   },
   {
     id: "benefits",
-    category: "benefits",
-    required: true,
-    contentTemplate:
-      "State expected benefits to participants or to society. If no direct benefit is anticipated, clearly say so.",
+    title: "Potential Benefits",
+    content: () =>
+      "Explain any expected benefits. If no direct benefit is expected, state clearly that participation may not benefit the participant but may help future patients.",
   },
   {
     id: "alternatives",
-    category: "alternatives",
-    required: true,
-    contentTemplate:
-      "Explain available alternatives to participation, including standard of care or other research options.",
+    title: "Alternatives to Participation",
+    content: () =>
+      "Describe available standard treatments or other options, including the option not to participate, without penalty.",
   },
   {
     id: "confidentiality",
-    category: "confidentiality",
-    required: true,
-    contentTemplate:
-      "Describe how data and samples will be stored, who can access them, and how confidentiality will be maintained in line with applicable regulations.",
+    title: "Confidentiality & Data Handling",
+    content: () =>
+      "Describe how data will be protected, who can access it, data de-identification, storage duration, and situations where confidentiality may be limited by law.",
   },
   {
-    id: "injury-compensation",
-    category: "compensation_injury",
-    required: true,
-    contentTemplate:
-      "Provide the compensation and medical management plan for research-related injury according to Indian regulations and institutional policies.",
+    id: "compensation-injury",
+    title: "Compensation & Medical Management for Injury",
+    content: () =>
+      "Explain availability of medical management and compensation for study-related injury according to institutional and Indian regulatory requirements (PI to confirm policy details).",
   },
   {
-    id: "voluntariness",
-    category: "voluntary_right_to_withdraw",
-    required: true,
-    contentTemplate:
-      "Participation is voluntary. Explain that refusal or withdrawal will not affect routine care and describe how to withdraw consent.",
+    id: "voluntary",
+    title: "Voluntary Participation",
+    content: () =>
+      "Emphasise that participation is voluntary, refusal involves no penalty, and participants may withdraw at any time without affecting routine care.",
   },
   {
     id: "future-use",
-    category: "data_use_future",
-    required: false,
-    contentTemplate:
-      "If samples or data may be used in future studies, describe the scope, storage duration, and re-consent requirements.",
+    title: "Future Use of Data/Samples",
+    content: () =>
+      "State whether samples/data may be stored for future research. Obtain explicit consent choices and describe withdrawal options.",
   },
   {
     id: "contacts",
-    category: "contacts",
-    required: true,
-    contentTemplate:
-      "List contact details for the principal investigator ({{principalInvestigator}}) and the ethics committee for questions or complaints.",
+    title: "Contacts for Questions & Complaints",
+    content: () =>
+      "Provide placeholders for PI contact, study coordinator, and IEC contact information for rights and grievances.",
   },
   {
     id: "vulnerable",
-    category: "vulnerable_populations",
-    required: false,
-    contentTemplate:
-      "Describe additional safeguards for vulnerable participants such as children, pregnant women, or those unable to consent independently.",
+    title: "Special Considerations for Vulnerable Participants",
+    content: () =>
+      "Outline additional safeguards for vulnerable populations (e.g., children, incapacitated adults) including assent and legal representative consent if applicable.",
   },
   {
-    id: "miscellaneous",
-    category: "misc",
-    required: true,
-    contentTemplate:
-      "Include statements on compensation for participation if any, audio-visual consent (where mandated), and language translation availability.",
+    id: "consent-documentation",
+    title: "Consent Documentation",
+    content: () =>
+      "Include signature/ thumbprint blocks for participant/LAR, date, witness (if required), and investigator obtaining consent. Add audio-visual consent statement if mandated.",
   },
 ];
 
-export function buildPisIcfDraft(
-  studySpec: StudySpec,
-  sampleSizeResult: SampleSizeResult | null,
-  sapPlan: SAPPlan | null
-): PisIcfDraft {
+export function buildPisIcfDraft(studySpec: StudySpec): PISICFDraft {
   const warnings: string[] = [];
 
-  if (!studySpec.title.trim()) {
-    warnings.push("Study title missing; consent introduction requires completion.");
+  if (!studySpec.primaryEndpoint) {
+    warnings.push("Primary endpoint unclear; ensure purpose and risk sections reflect confirmed objectives.");
+  }
+  if (!studySpec.designId) {
+    warnings.push("Design not confirmed; consent procedures must be validated by PI/IEC.");
   }
 
-  if (!studySpec.populationDescription) {
-    warnings.push("Population description absent; assess whether vulnerable population safeguards apply.");
-  }
-
-  if (studySpec.populationDescription) {
-    const lower = studySpec.populationDescription.toLowerCase();
-    if (/(child|adolescent|pregnan|neonate|elderly)/.test(lower)) {
-      warnings.push("Potential vulnerable participants detected; ensure dedicated safeguards and assent/witness wording.");
-    }
-  }
-
-  if (!sampleSizeResult || sampleSizeResult.status !== "ok") {
-    warnings.push("Consent document must include final sample size and visit commitments once approved.");
-  }
-
-  if (!sapPlan || sapPlan.steps.length === 0) {
-    warnings.push("Statistical description for participants should be updated after SAP confirmation.");
-  }
-
-  warnings.push(
-    "Confirm local language translations, signature blocks, and IEC-required statements before participant use."
-  );
+  const sections: PISICFSection[] = SECTION_BUILDERS.map((builder) => ({
+    id: builder.id,
+    title: builder.title,
+    required: true,
+    content: `${builder.content(studySpec)}\n[Provide lay-language narrative and site-specific details.]`,
+  }));
 
   return {
-    studyId: studySpec.id,
-    language: "en",
-    clauses: BASE_CLAUSES.map((clause) => ({ ...clause })),
+    sections,
     warnings,
   };
 }

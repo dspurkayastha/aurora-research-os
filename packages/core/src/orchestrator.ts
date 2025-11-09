@@ -1,5 +1,10 @@
 import { AURORA_RULEBOOK } from "./rulebook";
-import type { EndpointSpec, PreSpec, StudyDesignId, StudySpec } from "./types";
+import type {
+  EndpointSpec,
+  PreSpec,
+  StudyDesignId,
+  StudySpec,
+} from "./types";
 
 const POPULATION_KEYWORDS = [
   "patients",
@@ -16,7 +21,7 @@ const POPULATION_KEYWORDS = [
   "ward",
   "clinic",
   "tertiary",
-  "hospital"
+  "hospital",
 ];
 
 const SETTING_KEYWORDS = [
@@ -31,7 +36,7 @@ const SETTING_KEYWORDS = [
   "teaching hospital",
   "district hospital",
   "private hospital",
-  "government hospital"
+  "government hospital",
 ];
 
 const PRIMARY_OUTCOME_KEYWORDS = [
@@ -43,7 +48,7 @@ const PRIMARY_OUTCOME_KEYWORDS = [
   "readmission",
   "infection",
   "functional outcome",
-  "functional outcomes"
+  "functional outcomes",
 ];
 
 const TIMEFRAME_KEYWORDS = [
@@ -61,7 +66,7 @@ const TIMEFRAME_KEYWORDS = [
   "six-month",
   "3-month",
   "three-month",
-  "18-month"
+  "18-month",
 ];
 
 const RETROSPECTIVE_KEYWORDS = [
@@ -72,7 +77,7 @@ const RETROSPECTIVE_KEYWORDS = [
   "existing records",
   "medical records",
   "record review",
-  "database review"
+  "database review",
 ];
 
 const DIAGNOSTIC_KEYWORDS = [
@@ -83,7 +88,7 @@ const DIAGNOSTIC_KEYWORDS = [
   "diagnostic accuracy",
   "gold standard",
   "likelihood ratio",
-  "predictive value"
+  "predictive value",
 ];
 
 const INTERVENTION_KEYWORDS = [
@@ -100,7 +105,7 @@ const INTERVENTION_KEYWORDS = [
   "placebo",
   "two arms",
   "arm a",
-  "arm b"
+  "arm b",
 ];
 
 const SENTENCE_SPLIT_REGEX = /[.!?]+/;
@@ -114,7 +119,10 @@ function findFirstMatch(original: string, pattern: RegExp): string | undefined {
 }
 
 function findSentenceWithKeywords(original: string, keywords: string[]): string | undefined {
-  const sentences = original.split(SENTENCE_SPLIT_REGEX).map((segment) => segment.trim()).filter(Boolean);
+  const sentences = original
+    .split(SENTENCE_SPLIT_REGEX)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
   const lowerSentences = sentences.map((segment) => segment.toLowerCase());
 
   for (const keyword of keywords) {
@@ -180,7 +188,9 @@ export function parseIdeaToPreSpec(rawIdea: string): PreSpec {
 
   preSpec.isRetrospectiveHint = RETROSPECTIVE_KEYWORDS.some((keyword) => lowerIdea.includes(keyword));
   preSpec.isDiagnosticHint = DIAGNOSTIC_KEYWORDS.some((keyword) => lowerIdea.includes(keyword));
-  preSpec.mentionsInterventionOrComparison = INTERVENTION_KEYWORDS.some((keyword) => lowerIdea.includes(keyword));
+  preSpec.mentionsInterventionOrComparison = INTERVENTION_KEYWORDS.some((keyword) =>
+    lowerIdea.includes(keyword)
+  );
 
   return preSpec;
 }
@@ -250,7 +260,7 @@ function resolvePrimaryEndpoint(preSpec: PreSpec): EndpointSpec | null {
   const endpoint: EndpointSpec = {
     name: preSpec.primaryOutcomeHint,
     type,
-    role: "primary"
+    role: "primary",
   };
 
   if (preSpec.timeframeHint) {
@@ -267,23 +277,22 @@ function deriveTitle(preSpec: PreSpec): string {
 }
 
 export function buildBaselineSpec(preSpec: PreSpec, designId: StudyDesignId | null): StudySpec {
-  let resolvedDesignId = designId || chooseDesign(preSpec);
   const availableDesigns = AURORA_RULEBOOK.studyDesigns;
+  let resolvedDesignId = designId || chooseDesign(preSpec);
   const notes: string[] = [];
 
   if (!resolvedDesignId) {
-    resolvedDesignId = "prospective-cohort";
     notes.push("Design selection uncertain; requires human review.");
   }
 
-  const designConfig = availableDesigns.find((design) => design.id === resolvedDesignId);
+  const designConfig = resolvedDesignId
+    ? availableDesigns.find((design) => design.id === resolvedDesignId)
+    : undefined;
 
-  if (!designConfig) {
-    resolvedDesignId = "prospective-cohort";
-    notes.push("Selected design not in rulebook; defaulted to prospective cohort pending review.");
+  if (resolvedDesignId && !designConfig) {
+    notes.push("Selected design not in rulebook; requires reclassification by PI.");
+    resolvedDesignId = null;
   }
-
-  const finalDesignConfig = availableDesigns.find((design) => design.id === resolvedDesignId)!;
 
   if (resolvedDesignId === "rct-2arm-parallel" && !preSpec.mentionsInterventionOrComparison) {
     notes.push("RCT selected; confirm there is a true intervention/comparator and feasibility of randomization.");
@@ -294,31 +303,38 @@ export function buildBaselineSpec(preSpec: PreSpec, designId: StudyDesignId | nu
   }
 
   const primaryEndpoint = resolvePrimaryEndpoint(preSpec);
-
   if (!primaryEndpoint) {
     notes.push("Primary endpoint not clearly identified; must be defined by PI.");
   }
 
   const studySpec: StudySpec = {
     title: deriveTitle(preSpec),
-    designId: finalDesignConfig.id,
-    designLabel: finalDesignConfig.label,
+    designId: resolvedDesignId ?? undefined,
+    designLabel: designConfig?.label,
     regulatoryProfileId: AURORA_RULEBOOK.defaultRegulatoryProfileId,
     condition: preSpec.condition,
     populationDescription: preSpec.populationDescription,
     setting: preSpec.setting,
-    primaryEndpoint,
+    primaryEndpoint: primaryEndpoint ?? undefined,
     secondaryEndpoints: [],
-    isAdvancedDesign: false,
+    objectives: primaryEndpoint
+      ? {
+          primary: [`Evaluate ${primaryEndpoint.name} in the defined population.`],
+          secondary: [],
+        }
+      : { primary: [], secondary: [] },
+    eligibility: {
+      inclusion: [],
+      exclusion: [],
+    },
+    visitScheduleSummary: preSpec.timeframeHint
+      ? `Planned follow-up around ${preSpec.timeframeHint}.`
+      : undefined,
     notes,
     source: {
-      fromRulebookVersion: AURORA_RULEBOOK.version
-    }
+      fromRulebookVersion: AURORA_RULEBOOK.version,
+    },
   };
-
-  if (preSpec.timeframeHint && primaryEndpoint && !primaryEndpoint.timeframe) {
-    primaryEndpoint.timeframe = preSpec.timeframeHint;
-  }
 
   return studySpec;
 }

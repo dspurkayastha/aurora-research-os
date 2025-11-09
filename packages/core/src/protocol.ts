@@ -1,4 +1,3 @@
-import { AURORA_RULEBOOK } from "./rulebook";
 import type {
   ProtocolDraft,
   ProtocolSection,
@@ -7,155 +6,143 @@ import type {
   StudySpec,
 } from "./types";
 
-const SECTION_ORDER: ProtocolSection[] = [
-  {
-    id: "general-info",
-    title: "General Information & Administrative Details",
-    required: true,
-    contentTemplate:
-      "List administrative identifiers, sponsor/coordinator contacts, version history, and study governance details for {{title}}.",
-  },
+const REQUIRED_SECTIONS: { id: string; title: string; template: (spec: StudySpec) => string }[] = [
   {
     id: "background-rationale",
     title: "Background & Rationale",
-    required: true,
-    contentTemplate:
-      "Summarize existing evidence and justify why studying {{condition}} in {{populationDescription}} is necessary for this setting.",
+    template: (spec) =>
+      `Summarise current evidence for ${spec.condition ?? "the condition"} in ${
+        spec.populationDescription ?? "the intended population"
+      } and justify the need for this study in the stated setting.`,
   },
   {
     id: "objectives",
     title: "Objectives",
-    required: true,
-    contentTemplate:
-      "Define primary and secondary objectives aligned with the planned endpoints, ensuring the primary objective matches {{primaryEndpoint.name}}.",
+    template: (spec) =>
+      `List primary and secondary objectives. Ensure the primary objective is aligned with ${
+        spec.primaryEndpoint?.name ?? "the confirmed primary endpoint"
+      }.`,
   },
   {
-    id: "design-overview",
-    title: "Study Design Overview",
-    required: true,
-    contentTemplate:
-      "Describe the {{designLabel}} design, including observational/interventional classification, setting, and overall flow of participants.",
+    id: "study-design",
+    title: "Study Design",
+    template: (spec) =>
+      `Describe the ${spec.designLabel ?? "proposed"} (${spec.designId ?? "design TBD"}) design, including observational/interventional classification, overall flow, and setting (${spec.setting ?? "setting pending"}).`,
   },
   {
     id: "population-eligibility",
-    title: "Study Population & Eligibility Criteria",
-    required: true,
-    contentTemplate:
-      "Detail inclusion and exclusion criteria for {{populationDescription}} and describe recruitment or identification methods at each site.",
+    title: "Study Population & Eligibility",
+    template: (spec) =>
+      `Detail inclusion and exclusion criteria for ${
+        spec.populationDescription ?? "the intended participants"
+      }, referencing recruitment sources and screening approach.`,
   },
   {
-    id: "procedures",
-    title: "Study Treatments / Exposures / Procedures",
-    required: true,
-    contentTemplate:
-      "Outline interventions, exposures, and study procedures, including visit schedules, assessments, and handling of protocol deviations.",
+    id: "study-procedures",
+    title: "Study Procedures & Visit Schedule",
+    template: (spec) =>
+      `Outline study visits, procedures, data collection time points, and handling of protocol deviations. ${
+        spec.visitScheduleSummary ?? "Provide visit timing aligned with endpoints."
+      }`,
   },
   {
-    id: "outcomes",
-    title: "Outcome Measures",
-    required: true,
-    contentTemplate:
-      "List primary and secondary endpoints. Confirm the primary endpoint {{primaryEndpoint.name}} is consistent across SAP and CRF sections.",
+    id: "endpoints",
+    title: "Endpoints & Outcome Measures",
+    template: (spec) =>
+      `Enumerate all endpoints. Confirm the primary endpoint ${
+        spec.primaryEndpoint?.name ?? "[to be defined]"
+      } with measurement definition, timeframe ${spec.primaryEndpoint?.timeframe ?? "[specify]"}, and data source.`,
   },
   {
-    id: "sample-size-stats",
-    title: "Sample Size & Statistical Analysis",
-    required: true,
-    contentTemplate:
-      "Summarize the statistical hypotheses, assumptions, and planned analyses using outputs from the deterministic sample size and SAP engines.",
+    id: "sample-size",
+    title: "Sample Size & Justification",
+    template: () =>
+      "Insert deterministic sample size assumptions, formulas, and resulting numbers. Document data sources for assumptions and any design effect or dropout adjustments.",
   },
   {
-    id: "safety-management",
-    title: "Safety Reporting & Risk Management",
-    required: true,
-    contentTemplate:
-      "Describe identification, documentation, and reporting pathways for adverse events, serious adverse events, and other safety signals.",
+    id: "statistical-analysis",
+    title: "Statistical Analysis Overview",
+    template: () =>
+      "Summarise primary and secondary analyses referencing the SAP. Include analysis sets, models, effect measures, and planned sensitivity analyses.",
+  },
+  {
+    id: "safety-monitoring",
+    title: "Safety Monitoring & AE/SAE Reporting",
+    template: () =>
+      "Describe AE/SAE collection, reporting timelines, responsibilities, and escalation pathways consistent with Indian GCP/ICMR expectations.",
   },
   {
     id: "data-management",
-    title: "Data Management, Quality Control & Monitoring",
-    required: true,
-    contentTemplate:
-      "Explain data capture (including eCRF procedures), quality assurance, monitoring, and audit preparedness consistent with ALCOA+ principles.",
+    title: "Data Management & Confidentiality",
+    template: () =>
+      "Detail eCRF processes, data validation, quality control, monitoring, and compliance with ALCOA+ principles and local privacy requirements.",
   },
   {
-    id: "ethics",
+    id: "ethics-regulatory",
     title: "Ethics & Regulatory Considerations",
-    required: true,
-    contentTemplate:
-      "Document IEC/IRB submission plans, CTRI registration requirements, and regulatory pathways without implying approvals or IDs.",
+    template: () =>
+      "Summarise IEC submission requirements, CTRI registration intent, insurance/compensation references, without implying approvals or registrations.",
   },
   {
     id: "consent-process",
     title: "Informed Consent Process",
-    required: true,
-    contentTemplate:
-      "Describe how informed consent/assent will be obtained, including documentation, witnesses for vulnerable participants, and access to translations.",
-  },
-  {
-    id: "confidentiality",
-    title: "Confidentiality & Data Protection",
-    required: true,
-    contentTemplate:
-      "Explain data privacy safeguards, de-identification approach, access controls, and retention policies aligned with local regulations.",
+    template: () =>
+      "Describe consent/assent procedures, languages, documentation, audio-visual requirements (if any), and process for vulnerable participants.",
   },
   {
     id: "compensation",
-    title: "Compensation for Study-related Injury",
-    required: true,
-    contentTemplate:
-      "State compensation and medical management plans for study-related injury per Indian regulations, referencing applicable insurance or sponsor commitments.",
+    title: "Compensation & Medical Care for Injury",
+    template: () =>
+      "State approach to compensation and medical management for study-related injury referencing sponsor or institutional policy (PI to confirm).",
   },
   {
     id: "publication",
-    title: "Publication & Data Sharing",
-    required: true,
-    contentTemplate:
-      "Outline dissemination intentions, authorship principles, and data sharing governance subject to ethics approval and participant consent.",
+    title: "Publication, Data Sharing & Archiving",
+    template: () =>
+      "Outline dissemination plans, authorship considerations, data sharing governance, and record retention per regulations.",
+  },
+  {
+    id: "closing-reminder",
+    title: "Draft Status Notice",
+    template: () =>
+      "Draft generated by Aurora Research OS based on supplied inputs. Requires review and approval by Principal Investigator and Ethics Committee. Not a legal or regulatory approval.",
   },
 ];
 
 export function buildProtocolDraft(
   studySpec: StudySpec,
-  sampleSizeResult: SampleSizeResult | null,
-  sapPlan: SAPPlan | null
+  sap: SAPPlan,
+  sampleSize: SampleSizeResult
 ): ProtocolDraft {
   const warnings: string[] = [];
 
-  if (!studySpec.title.trim()) {
-    warnings.push("Study title is missing; protocol draft cannot be finalized.");
+  if (!studySpec.title?.trim()) {
+    warnings.push("Study title is missing; protocol draft incomplete.");
   }
-
+  if (!studySpec.designId) {
+    warnings.push("Study design not finalised; confirm design classification.");
+  }
   if (!studySpec.primaryEndpoint) {
-    warnings.push("Primary endpoint is not defined; objectives and outcomes sections require PI input.");
+    warnings.push("Primary endpoint missing; objectives and analyses need PI input.");
+  }
+  if (sampleSize.status !== "ok") {
+    warnings.push("Sample size justification pending; include final numbers before submission.");
+  }
+  if (sap.endpoints.length === 0) {
+    warnings.push("SAP does not list any endpoints; confirm with statistician.");
   }
 
-  if (!studySpec.populationDescription) {
-    warnings.push("Population description missing; eligibility criteria require clarification.");
-  }
-
-  if (studySpec.isAdvancedDesign) {
-    warnings.push("Design flagged as advanced; protocol template requires specialist review.");
-  }
-
-  if (!AURORA_RULEBOOK.studyDesigns.find((d) => d.id === studySpec.designId)) {
-    warnings.push("Study design not found in approved rulebook list; verify design classification.");
-  }
-
-  if (!sampleSizeResult || sampleSizeResult.status !== "ok") {
-    warnings.push("Sample size and assumptions must be finalized before protocol submission.");
-  }
-
-  if (!sapPlan || sapPlan.steps.length === 0) {
-    warnings.push("Statistical analysis plan outline incomplete; ensure SAP section is reviewed.");
-  }
-
-  const sections: ProtocolSection[] = SECTION_ORDER.map((section) => ({ ...section }));
+  const sections: ProtocolSection[] = REQUIRED_SECTIONS.map((section) => ({
+    id: section.id,
+    title: section.title,
+    required: true,
+    content: section.template(studySpec),
+  }));
 
   return {
-    studyId: studySpec.id,
     title: studySpec.title,
-    designId: studySpec.designId,
+    shortTitle: studySpec.title?.slice(0, 80),
+    versionTag: "Draft v1.0",
     sections,
     warnings,
   };

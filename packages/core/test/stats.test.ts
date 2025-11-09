@@ -24,7 +24,9 @@ const baseStudySpec: StudySpec = {
     timeframe: "30-day"
   },
   secondaryEndpoints: [],
-  isAdvancedDesign: false,
+  objectives: { primary: ["Assess 30-day mortality"], secondary: [] },
+  eligibility: { inclusion: [], exclusion: [] },
+  visitScheduleSummary: "Follow-up at 30 days",
   notes: [],
   source: { fromRulebookVersion: AURORA_RULEBOOK.version }
 };
@@ -59,8 +61,7 @@ test("registry design without key proportion returns incomplete", () => {
   const registrySpec: StudySpec = {
     ...baseStudySpec,
     designId: "registry",
-    designLabel: "Registry",
-    isAdvancedDesign: false
+    designLabel: "Registry"
   };
 
   const result = computeSampleSizeForStudy(registrySpec, {
@@ -78,8 +79,7 @@ test("advanced designs are marked unsupported", () => {
   const advancedSpec: StudySpec = {
     ...baseStudySpec,
     designId: advancedConfig.id,
-    designLabel: advancedConfig.label,
-    isAdvancedDesign: true
+    designLabel: advancedConfig.label
   };
 
   const result = computeSampleSizeForStudy(advancedSpec, {
@@ -95,8 +95,8 @@ test("SAP plan and explanation align with sample size outputs", () => {
   const plan = buildSAPPlan(baseStudySpec, sampleSizeResult);
   const explanation = generatePlainLanguageStatsExplanation(baseStudySpec, sampleSizeResult, plan);
 
-  assert.ok(plan.steps.length > 0);
-  assert.ok(plan.steps[0].label.includes("Primary analysis"));
+  assert.ok(plan.endpoints.length > 0);
+  assert.ok(plan.endpoints[0].testOrModel.length > 0);
   assert.ok(explanation.sampleSizeSummary.toLowerCase().includes("total sample size"));
   assert.ok(explanation.caveats.length >= 2);
 });
@@ -105,8 +105,7 @@ test("Explanation for non-ok result highlights inability to compute", () => {
   const registrySpec: StudySpec = {
     ...baseStudySpec,
     designId: "registry",
-    designLabel: "Registry",
-    isAdvancedDesign: false
+    designLabel: "Registry"
   };
 
   const incompleteResult = computeSampleSizeForStudy(registrySpec, {

@@ -1,218 +1,242 @@
-import { AURORA_RULEBOOK } from "./rulebook";
 import type {
+  BaselinePackage,
+  ChecklistItem,
+  RegistryFieldMapping,
+  RegistryMappingSheet,
   RegulatoryChecklist,
-  RegulatoryFieldMapping,
-  SAPPlan,
-  SampleSizeResult,
   StudySpec,
 } from "./types";
 
-interface FieldRequirement {
-  mapping: RegulatoryFieldMapping;
-  isPresent: (studySpec: StudySpec) => boolean;
-  missingMessage: string;
+function addMissing(items: ChecklistItem[], condition: boolean, partial: ChecklistItem) {
+  if (!condition) {
+    items.push(partial);
+  }
 }
 
-const FIELD_REQUIREMENTS: FieldRequirement[] = [
-  {
-    mapping: {
-      target: "CTRI",
+export function buildRegulatoryChecklist(baseline: BaselinePackage): RegulatoryChecklist {
+  const items: ChecklistItem[] = [];
+  const { studySpec, protocol, sap, crf, pisIcf, registryMapping } = baseline;
+
+  addMissing(items, Boolean(studySpec.designId), {
+    id: "design-confirmed",
+    label: "Study design confirmed in rulebook",
+    scope: "design",
+    status: "missing",
+    severity: "error",
+    notes: "Design classification must match Aurora rulebook before IEC/CTRI submission.",
+  });
+
+  addMissing(items, Boolean(studySpec.primaryEndpoint), {
+    id: "primary-endpoint",
+    label: "Primary endpoint defined",
+    scope: "endpoints",
+    status: "missing",
+    severity: "critical",
+    notes: "Primary outcome required across protocol, SAP, and CRF.",
+  });
+
+  if (sap.endpoints.length > 0) {
+    items.push({
+      id: "sap-primary-method",
+      label: "SAP outlines primary analysis",
+      scope: "sap",
+      status: "ok",
+      severity: "info",
+    });
+  } else {
+    items.push({
+      id: "sap-primary-method",
+      label: "SAP outlines primary analysis",
+      scope: "sap",
+      status: "missing",
+      severity: "error",
+      notes: "Add deterministic endpoint plans before IEC review.",
+    });
+  }
+
+  if (protocol.warnings.length > 0) {
+    items.push({
+      id: "protocol-warnings",
+      label: "Protocol warnings present",
+      scope: "protocol",
+      status: "needs-review",
+      severity: "warning",
+      notes: protocol.warnings.join("; "),
+    });
+  } else {
+    items.push({
+      id: "protocol-warnings",
+      label: "Protocol warnings present",
+      scope: "protocol",
+      status: "ok",
+      severity: "info",
+    });
+  }
+
+  if (crf.warnings.length > 0) {
+    items.push({
+      id: "crf-warnings",
+      label: "CRF alignment",
+      scope: "crf",
+      status: "needs-review",
+      severity: "warning",
+      notes: crf.warnings.join("; "),
+    });
+  } else {
+    items.push({
+      id: "crf-warnings",
+      label: "CRF alignment",
+      scope: "crf",
+      status: "ok",
+      severity: "info",
+    });
+  }
+
+  if (pisIcf.warnings.length > 0) {
+    items.push({
+      id: "pis-icf-warnings",
+      label: "PIS/ICF completeness",
+      scope: "pis-icf",
+      status: "needs-review",
+      severity: "warning",
+      notes: pisIcf.warnings.join("; "),
+    });
+  } else {
+    items.push({
+      id: "pis-icf-warnings",
+      label: "PIS/ICF completeness",
+      scope: "pis-icf",
+      status: "ok",
+      severity: "info",
+    });
+  }
+
+  const outstandingRegistry = registryMapping.fields.filter((field) => field.source === "pi-required");
+  if (outstandingRegistry.length > 0) {
+    items.push({
+      id: "registry-pending",
+      label: "Registry mapping pending PI inputs",
+      scope: "registry",
+      status: "needs-review",
+      severity: "warning",
+      notes: outstandingRegistry.map((field) => field.label).join(", "),
+    });
+  } else {
+    items.push({
+      id: "registry-pending",
+      label: "Registry mapping pending PI inputs",
+      scope: "registry",
+      status: "ok",
+      severity: "info",
+    });
+  }
+
+  items.push({
+    id: "draft-status",
+    label: "All outputs marked as drafts",
+    scope: "consistency",
+    status: "ok",
+    severity: "info",
+    notes: "Each artifact states it requires PI and IEC review; confirm before submission.",
+  });
+
+  return { items };
+}
+
+export function buildRegistryMappingSheet(studySpec: StudySpec): RegistryMappingSheet {
+  const fields: RegistryFieldMapping[] = [
+    {
       fieldId: "ctri_public_title",
-      label: "CTRI public title",
-      required: true,
-      sourceHint: "StudySpec.title",
+      label: "Public title",
+      value: studySpec.title,
+      source: studySpec.title ? "auto" : "pi-required",
+      notes: "Use lay language; ensure matches IEC submission.",
     },
-    isPresent: (studySpec) => Boolean(studySpec.title?.trim()),
-    missingMessage: "Public title missing for CTRI dataset.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
+    {
       fieldId: "ctri_scientific_title",
-      label: "CTRI scientific title",
-      required: true,
-      sourceHint: "Align with StudySpec.title or SAP objectives",
+      label: "Scientific title",
+      value: studySpec.title,
+      source: studySpec.title ? "auto" : "pi-required",
+      notes: "Provide final scientific title once approved.",
     },
-    isPresent: (studySpec) => Boolean(studySpec.title?.trim()),
-    missingMessage: "Scientific title requires completion in CTRI dataset.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
-      fieldId: "ctri_health_condition",
-      label: "Health condition/problem studied",
-      required: true,
-      sourceHint: "StudySpec.condition",
-    },
-    isPresent: (studySpec) => Boolean(studySpec.condition?.trim()),
-    missingMessage: "Health condition/indication not specified.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
+    {
       fieldId: "ctri_study_type",
       label: "Study type",
-      required: true,
-      sourceHint: "Derive from StudySpec.designLabel and rulebook category",
+      value: studySpec.designId ? "Interventional/Observational" : undefined,
+      source: studySpec.designId ? "auto" : "pi-required",
+      notes: "Specify exact classification in CTRI form.",
     },
-    isPresent: (studySpec) =>
-      Boolean(AURORA_RULEBOOK.studyDesigns.find((d) => d.id === studySpec.designId)),
-    missingMessage: "Study design not mapped to CTRI study type.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
+    {
       fieldId: "ctri_study_design",
-      label: "Study design details",
-      required: true,
-      sourceHint: "StudySpec.designLabel + protocol procedures",
+      label: "Study design",
+      value: studySpec.designLabel,
+      source: studySpec.designLabel ? "auto" : "pi-required",
     },
-    isPresent: (studySpec) => Boolean(studySpec.designLabel?.trim()),
-    missingMessage: "Detailed study design description required for CTRI.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
+    {
+      fieldId: "ctri_condition",
+      label: "Health condition/problem studied",
+      value: studySpec.condition,
+      source: studySpec.condition ? "auto" : "pi-required",
+    },
+    {
+      fieldId: "ctri_participant_inclusion",
+      label: "Key inclusion criteria",
+      source: studySpec.eligibility?.inclusion?.length ? "auto" : "pi-required",
+      notes: "Summarise inclusion criteria drawn from protocol.",
+    },
+    {
+      fieldId: "ctri_participant_exclusion",
+      label: "Key exclusion criteria",
+      source: studySpec.eligibility?.exclusion?.length ? "auto" : "pi-required",
+      notes: "Summarise exclusion criteria drawn from protocol.",
+    },
+    {
       fieldId: "ctri_primary_outcome",
       label: "Primary outcome",
-      required: true,
-      sourceHint: "StudySpec.primaryEndpoint",
+      value: studySpec.primaryEndpoint?.name,
+      source: studySpec.primaryEndpoint ? "auto" : "pi-required",
     },
-    isPresent: (studySpec) => Boolean(studySpec.primaryEndpoint?.name?.trim()),
-    missingMessage: "Primary outcome missing; CTRI cannot be completed.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
-      fieldId: "ctri_secondary_outcomes",
-      label: "Secondary outcomes",
-      required: false,
-      sourceHint: "StudySpec.secondaryEndpoints",
+    {
+      fieldId: "ctri_secondary_outcome",
+      label: "Key secondary outcomes",
+      value: studySpec.secondaryEndpoints.map((endpoint) => endpoint.name).join("; ") || undefined,
+      source: studySpec.secondaryEndpoints.length > 0 ? "auto" : "pi-required",
     },
-    isPresent: (studySpec) => studySpec.secondaryEndpoints.length > 0,
-    missingMessage: "Secondary outcomes not listed; mark as not applicable if none.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
+    {
       fieldId: "ctri_target_sample_size_india",
       label: "Target sample size (India)",
-      required: true,
-      sourceHint: "SampleSizeResult.totalSampleSize",
+      source: "pi-required",
+      notes: "Populate once sample size finalised and site list confirmed.",
     },
-    isPresent: () => false,
-    missingMessage: "Target sample size for India must be entered after sample size approval.",
-  },
-  {
-    mapping: {
-      target: "CTRI",
-      fieldId: "ctri_trial_sites",
-      label: "Trial sites",
-      required: true,
-      sourceHint: "Protocol site list",
+    {
+      fieldId: "ctri_target_sample_size_global",
+      label: "Target sample size (total)",
+      source: "pi-required",
+      notes: "Complete if multi-country; else match India target.",
     },
-    isPresent: () => false,
-    missingMessage: "Site information pending; add site names, addresses, and investigators.",
-  },
-  {
-    mapping: {
-      target: "IEC",
-      fieldId: "iec_primary_objective",
-      label: "IEC submission – primary objective",
-      required: true,
-      sourceHint: "Protocol objectives section",
+    {
+      fieldId: "ctri_sites",
+      label: "Trial sites & investigators",
+      source: "pi-required",
+      notes: "Provide site names, addresses, and PI details when final.",
     },
-    isPresent: (studySpec) => Boolean(studySpec.primaryEndpoint?.name?.trim()),
-    missingMessage: "Primary objective wording to align with primary endpoint.",
-  },
-  {
-    mapping: {
-      target: "IEC",
-      fieldId: "iec_risk_category",
-      label: "IEC risk categorisation",
-      required: true,
-      sourceHint: "Safety section and intervention risk profile",
+    {
+      fieldId: "ctri_randomisation",
+      label: "Randomisation procedure",
+      value: studySpec.designId === "rct-2arm-parallel" ? "Randomised" : undefined,
+      source: studySpec.designId === "rct-2arm-parallel" ? "auto" : "pi-required",
     },
-    isPresent: () => false,
-    missingMessage: "Risk category not determined; classify (e.g., minimal, more than minimal).",
-  },
-  {
-    mapping: {
-      target: "IEC",
-      fieldId: "iec_compensation_plan",
-      label: "Compensation for injury",
-      required: true,
-      sourceHint: "Protocol compensation section",
+    {
+      fieldId: "ctri_blinding",
+      label: "Blinding/masking",
+      source: "pi-required",
+      notes: "Indicate open-label, single-blind, etc., if applicable.",
     },
-    isPresent: () => false,
-    missingMessage: "Compensation wording required per IEC template.",
-  },
-  {
-    mapping: {
-      target: "ICMR",
-      fieldId: "icmr_informed_consent",
-      label: "ICMR consent elements",
-      required: true,
-      sourceHint: "PIS/ICF clauses",
-    },
-    isPresent: (studySpec) => Boolean(studySpec.populationDescription),
-    missingMessage: "Ensure consent clauses address participant profile and mandatory elements.",
-  },
-  {
-    mapping: {
-      target: "ICMR",
-      fieldId: "icmr_data_sharing",
-      label: "Data sharing statement",
-      required: false,
-      sourceHint: "Protocol publication/data sharing section",
-    },
-    isPresent: () => false,
-    missingMessage: "Data sharing plans to be documented before submission.",
-  },
-  {
-    mapping: {
-      target: "LOCAL",
-      fieldId: "institutional_agreements",
-      label: "Institutional approvals/agreements",
-      required: true,
-      sourceHint: "Site feasibility and MOUs",
-    },
-    isPresent: () => false,
-    missingMessage: "Document local hospital or college permissions before initiation.",
-  },
-];
-
-export function buildRegulatoryChecklist(
-  studySpec: StudySpec,
-  sampleSizeResult: SampleSizeResult | null,
-  sapPlan: SAPPlan | null
-): RegulatoryChecklist {
-  const mappings: RegulatoryFieldMapping[] = FIELD_REQUIREMENTS.map((item) => item.mapping);
-  const missing: string[] = [];
-
-  for (const requirement of FIELD_REQUIREMENTS) {
-    if (!requirement.isPresent(studySpec)) {
-      missing.push(requirement.missingMessage);
-    }
-  }
-
-  const warnings = [
-    "Checklist reflects India v1 expectations; verify against latest CTRI/IEC/ICMR templates before submission.",
-    "Do not submit until missing items are resolved and supporting documents are attached.",
   ];
 
-  if (!sampleSizeResult || sampleSizeResult.status !== "ok") {
-    missing.push("Final sample size numbers must be provided before regulatory submission.");
-  }
-
-  if (!sapPlan || sapPlan.steps.length === 0) {
-    missing.push("Attach detailed statistical analysis plan as part of IEC/CTRI package.");
-  }
-
   return {
-    studyId: studySpec.id,
-    mappings,
-    missing,
-    warnings,
+    registry: "CTRI-like",
+    fields,
   };
 }
+

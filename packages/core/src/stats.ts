@@ -481,6 +481,13 @@ export function computeSampleSizeForStudy(
   studySpec: StudySpec,
   assumptions: SampleSizeAssumptionsBase
 ): SampleSizeResult {
+  if (!studySpec.designId) {
+    return incompleteResult(
+      assumptions,
+      "Study design is required before sample size calculations."
+    );
+  }
+
   if (!studySpec.primaryEndpoint) {
     return incompleteResult(
       assumptions,
