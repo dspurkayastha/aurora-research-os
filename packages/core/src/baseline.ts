@@ -98,7 +98,7 @@ function crossLinkIssues(baseline: BaselinePackage, sapExplanation: StatsExplana
       code: "design-not-whitelisted",
       scope: "design",
       severity: "error",
-      message: "Selected design is not in the India v1 whitelist; escalate to PI/statistician before proceeding.",
+      message: "Selected design is not in the whitelisted Aurora designs and requires PI confirmation.",
     });
   }
 
