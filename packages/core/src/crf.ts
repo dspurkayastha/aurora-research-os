@@ -415,4 +415,3 @@ export function buildCrfSchema(studySpec: StudySpec): CRFSchema {
     warnings,
   };
 }
-

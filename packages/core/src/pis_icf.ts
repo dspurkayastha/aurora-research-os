@@ -107,4 +107,3 @@ export function buildPisIcfDraft(studySpec: StudySpec): PISICFDraft {
     warnings,
   };
 }
-
