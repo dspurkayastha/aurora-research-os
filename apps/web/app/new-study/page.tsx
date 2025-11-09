@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
 import {
   AURORA_RULEBOOK,
   buildBaselineSpec,
+  buildCrfSchema,
+  buildLiteraturePlan,
+  buildPisIcfDraft,
+  buildProtocolDraft,
+  buildRegulatoryChecklist,
   buildSAPPlan,
   chooseDesign,
   computeSampleSizeForStudy,
@@ -11,6 +17,11 @@ import {
   parseIdeaToPreSpec
 } from "@aurora/core";
 import type {
+  CrfSchema,
+  LiteraturePlan,
+  PisIcfDraft,
+  ProtocolDraft,
+  RegulatoryChecklist,
   SAPPlan,
   SampleSizeAssumptionsBase,
   SampleSizeResult,
@@ -632,6 +643,29 @@ export default function NewStudyPage() {
     return Array.from(unique.values());
   }, [sampleSizeResult, sapPlan]);
 
+  const documentDrafts = useMemo(() => {
+    if (!story) {
+      return null;
+    }
+
+    const sampleResult = sampleSizeResult ?? null;
+    const plan = sapPlan ?? null;
+
+    const protocol = buildProtocolDraft(story.studySpec, sampleResult, plan);
+    const crf = buildCrfSchema(story.studySpec, sampleResult, plan);
+    const pisIcf = buildPisIcfDraft(story.studySpec, sampleResult, plan);
+    const regulatory = buildRegulatoryChecklist(story.studySpec, sampleResult, plan);
+    const literature = buildLiteraturePlan(story.studySpec, sampleResult, plan);
+
+    return { protocol, crf, pisIcf, regulatory, literature } as {
+      protocol: ProtocolDraft;
+      crf: CrfSchema;
+      pisIcf: PisIcfDraft;
+      regulatory: RegulatoryChecklist;
+      literature: LiteraturePlan;
+    };
+  }, [story, sampleSizeResult, sapPlan]);
+
   return (
     <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
       <section className="space-y-8">
@@ -882,6 +916,171 @@ export default function NewStudyPage() {
           </p>
         </div>
 
+        <div className="space-y-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-800">Document &amp; compliance drafts</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Deterministic templates derived from Aurora’s rulebook and guideline structures. They remain drafts until reviewed by the PI, statistician, and IEC.
+            </p>
+          </div>
+
+          {!story || !documentDrafts ? (
+            <p className="text-sm text-slate-500">Generate a study story to view protocol, consent, and checklist scaffolds.</p>
+          ) : (
+            <div className="space-y-6">
+              {documentDrafts.protocol.warnings.length > 0 ? (
+                <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700">
+                  {documentDrafts.protocol.warnings.map((warning) => (
+                    <div key={`protocol-warning-${warning}`}>• {warning}</div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-800">Protocol outline</h3>
+                <ul className="space-y-2">
+                  {documentDrafts.protocol.sections.map((section) => (
+                    <li
+                      key={section.id}
+                      className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium text-slate-800">{section.title}</p>
+                        <span className="text-xs text-slate-500">{section.required ? "Required" : "Optional"}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">{section.contentTemplate}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-800">CRF / eCRF schema</h3>
+                {documentDrafts.crf.warnings.length > 0 ? (
+                  <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700">
+                    {documentDrafts.crf.warnings.map((warning) => (
+                      <div key={`crf-warning-${warning}`}>• {warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="space-y-3">
+                  {documentDrafts.crf.forms.map((form) => (
+                    <div key={form.id} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium text-slate-800">{form.title}</p>
+                        {form.visitLabel ? (
+                          <span className="text-xs text-slate-500">Visit: {form.visitLabel}</span>
+                        ) : null}
+                      </div>
+                      <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                        {form.fields.map((field) => (
+                          <li key={`${form.id}-${field.id}`}>
+                            <span className="font-medium text-slate-700">{field.label}</span>
+                            <span className="text-slate-500"> — {field.type}</span>
+                            {field.core ? <span className="ml-1 text-amber-600">(core)</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-800">PIS/ICF clause skeleton</h3>
+                {documentDrafts.pisIcf.warnings.length > 0 ? (
+                  <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700">
+                    {documentDrafts.pisIcf.warnings.map((warning) => (
+                      <div key={`pis-${warning}`}>• {warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+                <ul className="space-y-2">
+                  {documentDrafts.pisIcf.clauses.map((clause) => (
+                    <li
+                      key={clause.id}
+                      className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700"
+                    >
+                      <div className="flex items-center justify-between">
+                        <p className="font-medium text-slate-800">{clause.category.replace(/_/g, " ")}</p>
+                        <span className="text-xs text-slate-500">{clause.required ? "Required" : "Optional"}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600">{clause.contentTemplate}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-800">Regulatory checklist (India v1 helper)</h3>
+                {documentDrafts.regulatory.warnings.length > 0 ? (
+                  <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700">
+                    {documentDrafts.regulatory.warnings.map((warning) => (
+                      <div key={`reg-${warning}`}>• {warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                  <h4 className="text-sm font-semibold text-slate-800">Key mappings</h4>
+                  <ul className="mt-2 space-y-1">
+                    {documentDrafts.regulatory.mappings.map((mapping) => (
+                      <li key={`${mapping.target}-${mapping.fieldId}`}>
+                        <span className="font-medium text-slate-700">[{mapping.target}] {mapping.label}</span>
+                        <span className="text-slate-500"> — {mapping.required ? "Required" : "Optional"}</span>
+                        {mapping.sourceHint ? (
+                          <span className="text-slate-500"> (Source: {mapping.sourceHint})</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {documentDrafts.regulatory.missing.length > 0 ? (
+                    <div className="mt-3 space-y-1 rounded border border-amber-300 bg-amber-50 p-2 text-amber-700">
+                      {documentDrafts.regulatory.missing.map((gap) => (
+                        <div key={gap}>• {gap}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-800">Literature review scaffold</h3>
+                {documentDrafts.literature.warnings.length > 0 ? (
+                  <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-700">
+                    {documentDrafts.literature.warnings.map((warning) => (
+                      <div key={`lit-${warning}`}>• {warning}</div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                  <h4 className="font-medium text-slate-800">Key questions</h4>
+                  <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                    {documentDrafts.literature.questions.map((question) => (
+                      <li key={question.id}>
+                        <span className="font-medium text-slate-700">{question.label}:</span> {question.description}
+                      </li>
+                    ))}
+                  </ul>
+                  <h4 className="mt-3 font-medium text-slate-800">Suggested keywords</h4>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {documentDrafts.literature.suggestedKeywords.length > 0
+                      ? documentDrafts.literature.suggestedKeywords.join(", ")
+                      : "Provide condition and endpoint details to enrich keyword suggestions."}
+                  </p>
+                  <h4 className="mt-3 font-medium text-slate-800">Evidence table columns</h4>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {documentDrafts.literature.tableTemplate.join(" | ")}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500">
+            Deterministic drafts based on Aurora India v1 rulebook &amp; guideline structures. Complete narrative content, institution-specific policies, and approvals before use.
+          </p>
+        </div>
+      </section>
 
       <aside className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-6">
         <div>
@@ -975,3 +1174,4 @@ export default function NewStudyPage() {
     </div>
   );
 }
+

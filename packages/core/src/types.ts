@@ -156,3 +156,113 @@ export interface StatsExplanation {
   assumptionSummary: string;
   caveats: string[];
 }
+
+export interface ProtocolSection {
+  id: string;
+  title: string;
+  required: boolean;
+  dependsOn?: string[];
+  contentTemplate: string;
+}
+
+export interface ProtocolDraft {
+  studyId?: string;
+  title: string;
+  designId: StudyDesignId;
+  sections: ProtocolSection[];
+  warnings: string[];
+}
+
+export type CrfFieldType =
+  | "text"
+  | "number"
+  | "date"
+  | "datetime"
+  | "select"
+  | "radio"
+  | "checkbox"
+  | "textarea";
+
+export interface CrfField {
+  id: string;
+  label: string;
+  type: CrfFieldType;
+  required: boolean;
+  options?: string[];
+  unit?: string;
+  notes?: string;
+  core?: boolean;
+}
+
+export interface CrfForm {
+  id: string;
+  title: string;
+  visitLabel?: string;
+  fields: CrfField[];
+}
+
+export interface CrfSchema {
+  studyId?: string;
+  forms: CrfForm[];
+  warnings: string[];
+}
+
+export type PisIcfClauseCategory =
+  | "intro"
+  | "purpose"
+  | "procedures"
+  | "risks"
+  | "benefits"
+  | "alternatives"
+  | "confidentiality"
+  | "compensation_injury"
+  | "voluntary_right_to_withdraw"
+  | "data_use_future"
+  | "contacts"
+  | "vulnerable_populations"
+  | "misc";
+
+export interface PisIcfClause {
+  id: string;
+  category: PisIcfClauseCategory;
+  required: boolean;
+  contentTemplate: string;
+}
+
+export interface PisIcfDraft {
+  studyId?: string;
+  language: "en";
+  clauses: PisIcfClause[];
+  warnings: string[];
+}
+
+export type RegulatoryTarget = "CTRI" | "IEC" | "ICMR" | "LOCAL";
+
+export interface RegulatoryFieldMapping {
+  target: RegulatoryTarget;
+  fieldId: string;
+  label: string;
+  required: boolean;
+  sourceHint?: string;
+}
+
+export interface RegulatoryChecklist {
+  studyId?: string;
+  mappings: RegulatoryFieldMapping[];
+  missing: string[];
+  warnings: string[];
+}
+
+export interface LiteratureQuestion {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface LiteraturePlan {
+  studyId?: string;
+  questions: LiteratureQuestion[];
+  suggestedKeywords: string[];
+  tableTemplate: string[];
+  warnings: string[];
+}

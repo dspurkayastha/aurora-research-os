@@ -23,3 +23,8 @@ export * from "./types";
 export * from "./orchestrator";
 export * from "./stats";
 export * from "./sap";
+export * from "./protocol";
+export * from "./crf";
+export * from "./pis_icf";
+export * from "./regulatory";
+export * from "./literature";
