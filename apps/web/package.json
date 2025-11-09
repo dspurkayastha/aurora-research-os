@@ -5,10 +5,13 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "tsc -p tsconfig.test.json && NODE_PATH=dist-test/test/mocks node --test \"dist-test/test/**/*.js\""
   },
   "dependencies": {
     "@aurora/core": "0.1.0",
+    "archiver": "^6.0.0",
+    "docx": "^8.5.0",
     "next": "^14.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

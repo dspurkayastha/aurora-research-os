@@ -301,3 +301,4 @@ export function canLockAndLaunch(
 
   return { allowed: blockingIssues.length === 0, blockingIssues };
 }
+

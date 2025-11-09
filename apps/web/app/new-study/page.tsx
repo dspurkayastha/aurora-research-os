@@ -562,6 +562,7 @@ export default function NewStudyPage() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [acknowledgeCritical, setAcknowledgeCritical] = useState(false);
 
   const storySpec = useMemo(() => {
     if (!storyRequested || !idea.trim()) return null;
@@ -573,6 +574,11 @@ export default function NewStudyPage() {
   const assumptionFields = useMemo(() => getAssumptionFields(storySpec), [storySpec]);
 
   const gate = useMemo(() => (baselineResult ? canLockAndLaunch(baselineResult) : null), [baselineResult]);
+  const criticalIssues = useMemo(
+    () => baselineResult?.issues.filter((issue) => issue.severity === "critical") ?? [],
+    [baselineResult]
+  );
+  const hasCriticalIssues = criticalIssues.length > 0;
 
   const handleGenerateStory = () => {
     if (!idea.trim()) {
@@ -583,6 +589,7 @@ export default function NewStudyPage() {
     setStoryRequested(true);
     setBaselineResult(null);
     setDownloadError(null);
+    setAcknowledgeCritical(false);
   };
 
   const handleAssumptionChange = (key: keyof FormInputs, value: string) => {
@@ -599,24 +606,37 @@ export default function NewStudyPage() {
     setBaselineResult(result);
     setError(null);
     setDownloadError(null);
+    setAcknowledgeCritical(false);
   };
 
   const handleDownload = async () => {
     if (!baselineResult || !storySpec) return;
+    if (hasCriticalIssues && !acknowledgeCritical) {
+      setDownloadError(
+        "Acknowledge the critical compliance issues before downloading the baseline pack."
+      );
+      return;
+    }
     try {
       setDownloading(true);
       setDownloadError(null);
       const payload = buildAssumptionsPayload(storySpec, assumptions);
-      const response = await fetch("/api/baseline-pack", {
+      const response = await fetch("/api/baseline-pack/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, assumptions: payload }),
+        body: JSON.stringify({
+          idea,
+          assumptions: payload,
+          acknowledgeCritical: hasCriticalIssues ? acknowledgeCritical : undefined,
+        }),
       });
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         if (response.status === 422 && data?.issues) {
-          setDownloadError("Resolve critical compliance issues before downloading the baseline pack.");
+          setDownloadError(
+            "Baseline pack export blocked until critical issues are acknowledged or resolved."
+          );
         } else {
           setDownloadError(data?.error ?? "Failed to download baseline pack.");
         }
@@ -785,7 +805,7 @@ export default function NewStudyPage() {
             </div>
             {gate && gate.blockingIssues.length > 0 && (
               <div className="mt-3 rounded border border-amber-300 bg-amber-100 p-3 text-sm text-amber-800">
-                <p className="font-medium">Resolve these blocking issues before export:</p>
+                <p className="font-medium">Resolve or formally acknowledge these blocking issues before export:</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   {gate.blockingIssues.map((issue) => (
                     <li key={`blocking-${issue.code}`}>{issue.message}</li>
@@ -793,14 +813,30 @@ export default function NewStudyPage() {
                 </ul>
               </div>
             )}
+            {hasCriticalIssues && (
+              <label className="mt-4 flex items-start gap-2 text-sm text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={acknowledgeCritical}
+                  onChange={(event) => setAcknowledgeCritical(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  I understand these drafts contain critical unresolved issues and acknowledge that they are not IEC-approved or
+                  ready for launch.
+                </span>
+              </label>
+            )}
             {downloadError && <p className="mt-3 text-sm text-red-700">{downloadError}</p>}
             <div className="mt-4 flex items-center gap-3">
               <button
                 type="button"
                 onClick={handleDownload}
-                disabled={!gate || !gate.allowed || downloading}
+                disabled={
+                  downloading || !baselineResult || (hasCriticalIssues && !acknowledgeCritical)
+                }
                 className={`rounded px-4 py-2 text-sm font-semibold text-white shadow ${
-                  !gate || !gate.allowed || downloading
+                  downloading || !baselineResult || (hasCriticalIssues && !acknowledgeCritical)
                     ? "cursor-not-allowed bg-neutral-400"
                     : "bg-emerald-600 hover:bg-emerald-500"
                 }`}
@@ -824,3 +860,4 @@ export default function NewStudyPage() {
     </main>
   );
 }
+
