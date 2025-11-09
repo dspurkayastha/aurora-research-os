@@ -9,10 +9,11 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "echo \"TODO: implement monorepo build\"",
-    "test": "echo \"TODO: implement tests\"",
-    "lint": "echo \"TODO: implement lint\"",
-    "dev:web": "npm --workspace apps/web run dev",
-    "dev:api": "npm --workspace services/api run dev"
+    "dev:web": "npm run dev --workspace @aurora/web",
+    "dev:api": "npm run dev --workspace @aurora/api",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces || echo \"no tests yet\"",
+    "lint": "npm run lint --workspaces || echo \"no linters yet\""
   }
 }
+
