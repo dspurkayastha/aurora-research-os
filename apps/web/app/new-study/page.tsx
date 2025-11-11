@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 
 import {
   BaselineBuildResult,
-  buildBaselineSpec,
   buildBaselinePackageFromIdea,
   canLockAndLaunch,
-  chooseDesign,
-  parseIdeaToPreSpec,
+  getResearchBackedDefaults,
+  getResearchSourcesForAssumptions,
+  formatResearchCitation,
+  buildBaselineSpec,
+  type ResearchSource,
 } from "@aurora/core";
 import type {
   CRFForm,
@@ -21,8 +23,18 @@ import type {
   SampleSizeResult,
   StudySpec,
 } from "@aurora/core";
+import { checkAIAvailability, parseIdeaWithAI, selectDesignWithAI } from "../../lib/ai-service";
 
 const STEPS = ["Idea", "Design", "Sample Size", "Documents", "Review & Compliance", "Launch Workspace"];
+
+type StepStatus = "pending" | "in-progress" | "completed" | "error";
+
+interface WorkflowStep {
+  id: string;
+  label: string;
+  status: StepStatus;
+  ref?: React.RefObject<HTMLDivElement>;
+}
 
 const INITIAL_ASSUMPTIONS = {
   alpha: "0.05",
@@ -277,18 +289,36 @@ function renderList(items: string[] | undefined) {
   );
 }
 
-function StudyStoryPanel({ studySpec }: { studySpec: StudySpec }) {
+function StudyStoryPanel({ 
+  studySpec, 
+  designConfidence, 
+  designReasoning 
+}: { 
+  studySpec: StudySpec;
+  designConfidence?: number | null;
+  designReasoning?: string | null;
+}) {
   return (
     <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
       <h2 className="text-lg font-semibold">Study Story (Draft)</h2>
       <p className="mt-2 text-sm text-neutral-700">
-        Draft interpretation generated from your idea using Aurora's rulebook. Requires PI and IEC review before use.
+        Draft interpretation generated from your idea using AI and Aurora's rulebook. Requires PI and IEC review before use.
       </p>
       <div className="mt-4 space-y-2 text-sm">
         <div><span className="font-medium">Title:</span> {studySpec.title}</div>
         <div>
           <span className="font-medium">Design:</span> {studySpec.designLabel ?? "Needs classification"}
+          {designConfidence !== null && designConfidence !== undefined && (
+            <span className="ml-2 text-xs text-neutral-600">
+              (AI confidence: {designConfidence}%)
+            </span>
+          )}
         </div>
+        {designReasoning && (
+          <div className="mt-2 rounded bg-blue-50 p-2 text-xs text-blue-800">
+            <span className="font-medium">AI Reasoning:</span> {designReasoning}
+          </div>
+        )}
         <div><span className="font-medium">Condition:</span> {studySpec.condition ?? "Not parsed"}</div>
         <div>
           <span className="font-medium">Population:</span> {studySpec.populationDescription ?? "Not parsed"}
@@ -557,19 +587,123 @@ function LiteraturePanel({ plan }: { plan: LiteraturePlan }) {
 export default function NewStudyPage() {
   const [idea, setIdea] = useState("");
   const [storyRequested, setStoryRequested] = useState(false);
+  const [parsing, setParsing] = useState(false);
   const [assumptions, setAssumptions] = useState<FormInputs>(INITIAL_ASSUMPTIONS);
   const [baselineResult, setBaselineResult] = useState<BaselineBuildResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [acknowledgeCritical, setAcknowledgeCritical] = useState(false);
+  const [aiAvailable, setAiAvailable] = useState<boolean | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [storySpec, setStorySpec] = useState<StudySpec | null>(null);
+  const [designConfidence, setDesignConfidence] = useState<number | null>(null);
+  const [designReasoning, setDesignReasoning] = useState<string | null>(null);
+  const [researchSources, setResearchSources] = useState<ResearchSource[]>([]);
+  const [useAIEnhancement, setUseAIEnhancement] = useState(true);
+  const [downloadProgress, setDownloadProgress] = useState<{
+    active: boolean;
+    progress: number;
+    currentFile?: string;
+  }>({ active: false, progress: 0 });
+  
+  // Refs for auto-scrolling to steps
+  const ideaStepRef = useRef<HTMLDivElement>(null);
+  const designStepRef = useRef<HTMLDivElement>(null);
+  const sampleSizeStepRef = useRef<HTMLDivElement>(null);
+  const documentsStepRef = useRef<HTMLDivElement>(null);
+  const reviewStepRef = useRef<HTMLDivElement>(null);
+  const downloadStepRef = useRef<HTMLDivElement>(null);
+  
+  // Determine current step status
+  const getCurrentStep = (): number => {
+    if (downloading) return 5; // Download
+    if (baselineResult) return 4; // Review
+    if (storySpec && baselineResult) return 3; // Documents
+    if (storySpec) return 2; // Sample Size
+    if (storySpec || parsing) return 1; // Design
+    return 0; // Idea
+  };
+  
+  const getStepStatus = (stepIndex: number): StepStatus => {
+    const current = getCurrentStep();
+    if (stepIndex < current) return "completed";
+    if (stepIndex === current) {
+      if (parsing || downloading) return "in-progress";
+      return "completed";
+    }
+    return "pending";
+  };
+  
+  // Auto-scroll to current step
+  useEffect(() => {
+    const currentStep = getCurrentStep();
+    const refs = [ideaStepRef, designStepRef, sampleSizeStepRef, documentsStepRef, reviewStepRef, downloadStepRef];
+    const ref = refs[currentStep];
+    if (ref?.current) {
+      setTimeout(() => {
+        ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 300);
+    }
+  }, [storySpec, baselineResult, downloading, parsing]);
 
-  const storySpec = useMemo(() => {
-    if (!storyRequested || !idea.trim()) return null;
-    const preSpec = parseIdeaToPreSpec(idea);
-    const designId = chooseDesign(preSpec);
-    return buildBaselineSpec(preSpec, designId);
-  }, [idea, storyRequested]);
+  // Check AI availability on mount (MANDATORY)
+  useEffect(() => {
+    async function checkAI() {
+      const status = await checkAIAvailability();
+      setAiAvailable(status.available);
+      if (!status.available) {
+        setAiError(status.reason || "AI service unavailable");
+      }
+    }
+    checkAI();
+  }, []);
+
+  // Get research sources when story spec changes
+  useEffect(() => {
+    if (storySpec) {
+      const sources = getResearchSourcesForAssumptions(storySpec);
+      setResearchSources(sources);
+      
+      // Populate assumptions with research-backed defaults
+      const defaults = getResearchBackedDefaults(
+        storySpec.condition,
+        storySpec.designId,
+        storySpec.primaryEndpoint?.type
+      );
+      
+      if (defaults.assumptions.expectedControlEventRate !== undefined) {
+        setAssumptions(prev => ({
+          ...prev,
+          expectedControlEventRate: defaults.assumptions.expectedControlEventRate?.toString() || "",
+        }));
+      }
+      if (defaults.assumptions.expectedTreatmentEventRate !== undefined) {
+        setAssumptions(prev => ({
+          ...prev,
+          expectedTreatmentEventRate: defaults.assumptions.expectedTreatmentEventRate?.toString() || "",
+        }));
+      }
+      if (defaults.assumptions.assumedSD !== undefined) {
+        setAssumptions(prev => ({
+          ...prev,
+          assumedSD: defaults.assumptions.assumedSD?.toString() || "",
+        }));
+      }
+      if (defaults.assumptions.expectedMeanControl !== undefined) {
+        setAssumptions(prev => ({
+          ...prev,
+          expectedMeanControl: defaults.assumptions.expectedMeanControl?.toString() || "",
+        }));
+      }
+      if (defaults.assumptions.expectedMeanTreatment !== undefined) {
+        setAssumptions(prev => ({
+          ...prev,
+          expectedMeanTreatment: defaults.assumptions.expectedMeanTreatment?.toString() || "",
+        }));
+      }
+    }
+  }, [storySpec]);
 
   const assumptionFields = useMemo(() => getAssumptionFields(storySpec), [storySpec]);
 
@@ -580,16 +714,43 @@ export default function NewStudyPage() {
   );
   const hasCriticalIssues = criticalIssues.length > 0;
 
-  const handleGenerateStory = () => {
+  const handleGenerateStory = async () => {
     if (!idea.trim()) {
       setError("Please describe your study idea first.");
       return;
     }
+    
+    if (aiAvailable === false) {
+      setError("AI service is required but unavailable. Please check your API configuration.");
+      return;
+    }
+    
     setError(null);
+    setParsing(true);
     setStoryRequested(true);
     setBaselineResult(null);
     setDownloadError(null);
     setAcknowledgeCritical(false);
+    
+    try {
+      // Step 1: Parse idea with AI (MANDATORY)
+      const preSpec = await parseIdeaWithAI(idea);
+      
+      // Step 2: Select design with AI (MANDATORY)
+      const designResult = await selectDesignWithAI(preSpec, idea);
+      setDesignConfidence(designResult.confidence);
+      setDesignReasoning(designResult.reasoning);
+      
+      // Step 3: Build spec with AI-selected design
+      const spec = buildBaselineSpec(preSpec, designResult.designId as any);
+      setStorySpec(spec);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to parse study idea with AI");
+      setStoryRequested(false);
+      setStorySpec(null);
+    } finally {
+      setParsing(false);
+    }
   };
 
   const handleAssumptionChange = (key: keyof FormInputs, value: string) => {
@@ -620,7 +781,18 @@ export default function NewStudyPage() {
     try {
       setDownloading(true);
       setDownloadError(null);
+      setDownloadProgress({ active: true, progress: 0, currentFile: "Preparing files..." });
+      
       const payload = buildAssumptionsPayload(storySpec, assumptions);
+      
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        setDownloadProgress((prev) => ({
+          ...prev,
+          progress: Math.min(prev.progress + 10, 90),
+        }));
+      }, 200);
+      
       const response = await fetch("/api/baseline-pack/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -628,11 +800,16 @@ export default function NewStudyPage() {
           idea,
           assumptions: payload,
           acknowledgeCritical: hasCriticalIssues ? acknowledgeCritical : undefined,
+          useAIEnhancement: useAIEnhancement && aiAvailable === true,
         }),
       });
 
+      clearInterval(progressInterval);
+      setDownloadProgress({ active: true, progress: 95, currentFile: "Generating zip file..." });
+
       if (!response.ok) {
         const data = await response.json().catch(() => null);
+        setDownloadProgress({ active: false, progress: 0 });
         if (response.status === 422 && data?.issues) {
           setDownloadError(
             "Baseline pack export blocked until critical issues are acknowledged or resolved."
@@ -643,6 +820,8 @@ export default function NewStudyPage() {
         return;
       }
 
+      setDownloadProgress({ active: true, progress: 100, currentFile: "Download complete!" });
+      
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -652,7 +831,12 @@ export default function NewStudyPage() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+      
+      setTimeout(() => {
+        setDownloadProgress({ active: false, progress: 0 });
+      }, 1000);
     } catch (err) {
+      setDownloadProgress({ active: false, progress: 0 });
       setDownloadError("Unexpected error while preparing the baseline pack. Please try again after resolving issues.");
     } finally {
       setDownloading(false);
@@ -661,23 +845,126 @@ export default function NewStudyPage() {
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 p-6">
-      <header className="space-y-2">
-        <h1 className="text-3xl font-semibold text-neutral-900">Aurora Research OS — New Study</h1>
-        <p className="text-neutral-700">
-          Aurora converts clinician ideas into deterministic drafts aligned with the India v1 rulebook. All outputs are drafts requiring Principal Investigator and IEC review.
-        </p>
-        <nav className="flex gap-2 text-xs uppercase tracking-widest text-neutral-500">
-          {STEPS.map((step, index) => (
-            <span key={step} className="flex items-center gap-2">
-              <span className="rounded-full border border-neutral-400 px-2 py-1">{index + 1}</span>
-              {step}
-            </span>
-          ))}
-        </nav>
+      <header className="space-y-4">
+        <div>
+          <h1 className="text-3xl font-semibold text-neutral-900">Aurora Research OS — New Study</h1>
+          <p className="mt-2 text-neutral-700">
+            Aurora converts clinician ideas into deterministic drafts aligned with the India v1 rulebook. All outputs are drafts requiring Principal Investigator and IEC review.
+          </p>
+        </div>
+        
+        {/* Enhanced Workflow Progress Indicator */}
+        <div className="relative">
+          <div className="flex items-center justify-between">
+            {STEPS.map((step, index) => {
+              const status = getStepStatus(index);
+              const isCurrent = index === getCurrentStep();
+              const isCompleted = status === "completed";
+              const isInProgress = status === "in-progress";
+              
+              return (
+                <div key={step} className="flex flex-col items-center flex-1 relative">
+                  {/* Connection line */}
+                  {index < STEPS.length - 1 && (
+                    <div className="absolute top-5 left-[60%] right-[-40%] h-0.5 z-0">
+                      <div 
+                        className={`h-full transition-all duration-500 ${
+                          isCompleted ? "bg-indigo-600" : "bg-neutral-300"
+                        }`}
+                        style={{ width: isCompleted ? "100%" : "0%" }}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* Step circle */}
+                  <div
+                    className={`relative z-10 flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300 ${
+                      isCurrent && isInProgress
+                        ? "border-indigo-600 bg-indigo-100 animate-pulse"
+                        : isCompleted
+                        ? "border-emerald-600 bg-emerald-50"
+                        : isCurrent
+                        ? "border-indigo-600 bg-indigo-50"
+                        : "border-neutral-300 bg-white"
+                    }`}
+                  >
+                    {isCompleted ? (
+                      <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : isInProgress ? (
+                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <span className={`text-sm font-semibold ${
+                        isCurrent ? "text-indigo-600" : "text-neutral-500"
+                      }`}>
+                        {index + 1}
+                      </span>
+                    )}
+                  </div>
+                  
+                  {/* Step label */}
+                  <span className={`mt-2 text-xs font-medium text-center max-w-[100px] ${
+                    isCurrent ? "text-indigo-600" : isCompleted ? "text-emerald-600" : "text-neutral-500"
+                  }`}>
+                    {step}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </header>
 
-      <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-semibold">1. Describe your study idea</h2>
+      {/* AI Availability Banner */}
+      {aiAvailable === false && (
+        <section className="rounded-lg border border-red-300 bg-red-50 p-4 shadow-sm">
+          <h2 className="text-lg font-semibold text-red-900">AI Service Unavailable (Required)</h2>
+          <p className="mt-2 text-sm text-red-800">
+            Aurora Research OS requires AI to function. Please configure your GEMINI_API_KEY.
+          </p>
+          {aiError && (
+            <p className="mt-1 text-xs text-red-700">Error: {aiError}</p>
+          )}
+          <div className="mt-3 text-sm text-red-800">
+            <p className="font-medium">Troubleshooting steps:</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-6">
+              <li>Check that GEMINI_API_KEY is set in services/api/.env</li>
+              <li>Get your API key from: https://makersuite.google.com/app/apikey</li>
+              <li>Restart the API service after setting the key</li>
+              <li>Check your internet connection</li>
+            </ol>
+          </div>
+        </section>
+      )}
+      
+      {aiAvailable === true && (
+        <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 shadow-sm">
+          <p className="text-sm text-emerald-800">✓ AI service available and ready</p>
+        </section>
+      )}
+
+      <section 
+        ref={ideaStepRef}
+        id="step-idea"
+        className={`rounded-lg border-2 transition-all duration-300 ${
+          getCurrentStep() === 0 
+            ? "border-indigo-500 bg-indigo-50 shadow-lg" 
+            : "border-neutral-300 bg-white shadow-sm"
+        } p-4`}
+      >
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+            getStepStatus(0) === "completed" 
+              ? "bg-emerald-600 text-white" 
+              : getStepStatus(0) === "in-progress"
+              ? "bg-indigo-600 text-white animate-pulse"
+              : "bg-neutral-300 text-neutral-600"
+          }`}>
+            {getStepStatus(0) === "completed" ? "✓" : "1"}
+          </span>
+          Describe your study idea
+        </h2>
         <textarea
           value={idea}
           onChange={(event) => setIdea(event.target.value)}
@@ -689,57 +976,147 @@ export default function NewStudyPage() {
           <button
             type="button"
             onClick={handleGenerateStory}
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500"
+            disabled={parsing || aiAvailable === false}
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-500 disabled:bg-neutral-400 disabled:cursor-not-allowed"
           >
-            Generate Study Story
+            {parsing ? "Parsing with AI..." : "Parse with AI"}
           </button>
         </div>
         {error && <p className="mt-2 text-sm text-amber-700">{error}</p>}
+        {parsing && <p className="mt-2 text-sm text-neutral-600">Using AI to parse your study idea...</p>}
       </section>
 
-      {storySpec && <StudyStoryPanel studySpec={storySpec} />}
+      {storySpec && (
+        <div ref={designStepRef} id="step-design">
+          <StudyStoryPanel 
+            studySpec={storySpec} 
+            designConfidence={designConfidence}
+            designReasoning={designReasoning}
+          />
+        </div>
+      )}
 
       {storySpec && (
-        <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
-          <h2 className="text-lg font-semibold">2. Provide sample size assumptions</h2>
+        <section 
+          ref={sampleSizeStepRef}
+          id="step-sample-size"
+          className={`rounded-lg border-2 transition-all duration-300 ${
+            getCurrentStep() === 2 
+              ? "border-indigo-500 bg-indigo-50 shadow-lg" 
+              : "border-neutral-300 bg-white shadow-sm"
+          } p-4`}
+        >
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+              getStepStatus(2) === "completed" 
+                ? "bg-emerald-600 text-white" 
+                : getStepStatus(2) === "in-progress"
+                ? "bg-indigo-600 text-white animate-pulse"
+                : "bg-neutral-300 text-neutral-600"
+            }`}>
+              {getStepStatus(2) === "completed" ? "✓" : "2"}
+            </span>
+            Provide sample size assumptions
+          </h2>
           <p className="text-sm text-neutral-700">
-            Aurora applies deterministic formulas only when inputs are explicit. Leave fields blank if unknown—the system will flag incomplete assumptions instead of guessing.
+            Aurora applies deterministic formulas only when inputs are explicit. Research-backed defaults are provided where available. All fields are fully editable.
           </p>
+          {researchSources.length > 0 && (
+            <div className="mt-3 rounded bg-blue-50 border border-blue-200 p-3">
+              <h3 className="text-sm font-medium text-blue-900">Research Sources</h3>
+              <ul className="mt-2 space-y-1 text-xs text-blue-800">
+                {researchSources.map((source, idx) => (
+                  <li key={idx}>
+                    {formatResearchCitation(source)}
+                    {source.pubmedId && (
+                      <a 
+                        href={`https://pubmed.ncbi.nlm.nih.gov/${source.pubmedId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 text-blue-600 underline"
+                      >
+                        View on PubMed
+                      </a>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             {assumptionFields.length === 0 ? (
               <p className="text-sm text-neutral-600">
                 Add a clear primary endpoint or confirm design to unlock the assumption form.
               </p>
             ) : (
-              assumptionFields.map((field) => (
-                <div key={field.key} className="flex flex-col">
-                  <label className="text-sm font-medium text-neutral-800">{field.label}</label>
-                  {field.type === "select" ? (
-                    <select
-                      value={assumptions[field.key]}
-                      onChange={(event) => handleAssumptionChange(field.key, event.target.value)}
-                      className="mt-1 rounded border border-neutral-300 p-2 text-sm focus:border-indigo-500 focus:outline-none"
-                    >
-                      {field.options?.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      type="number"
-                      value={assumptions[field.key]}
-                      onChange={(event) => handleAssumptionChange(field.key, event.target.value)}
-                      className="mt-1 rounded border border-neutral-300 p-2 text-sm focus:border-indigo-500 focus:outline-none"
-                      step={field.step}
-                      min={field.min}
-                      max={field.max}
-                    />
-                  )}
-                  {field.helper && <span className="mt-1 text-xs text-neutral-500">{field.helper}</span>}
-                </div>
-              ))
+              assumptionFields.map((field) => {
+                // Find research source for this field
+                const fieldSource = researchSources.find((source) => {
+                  const fieldKey = field.key;
+                  if (fieldKey === "expectedControlEventRate" || fieldKey === "expectedTreatmentEventRate") {
+                    return typeof source.value === "number";
+                  }
+                  if (fieldKey === "assumedSD") {
+                    return typeof source.value === "object" && "mean" in source.value;
+                  }
+                  return false;
+                });
+                
+                return (
+                  <div key={field.key} className="flex flex-col">
+                    <label className="text-sm font-medium text-neutral-800">
+                      {field.label}
+                      {fieldSource && (
+                        <span 
+                          className="ml-1 text-xs text-blue-600 cursor-help"
+                          title={formatResearchCitation(fieldSource)}
+                        >
+                          ℹ️
+                        </span>
+                      )}
+                    </label>
+                    {field.type === "select" ? (
+                      <select
+                        value={assumptions[field.key]}
+                        onChange={(event) => handleAssumptionChange(field.key, event.target.value)}
+                        className="mt-1 rounded border border-neutral-300 p-2 text-sm focus:border-indigo-500 focus:outline-none"
+                      >
+                        {field.options?.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="number"
+                        value={assumptions[field.key]}
+                        onChange={(event) => handleAssumptionChange(field.key, event.target.value)}
+                        className="mt-1 rounded border border-neutral-300 p-2 text-sm focus:border-indigo-500 focus:outline-none"
+                        step={field.step}
+                        min={field.min}
+                        max={field.max}
+                      />
+                    )}
+                    {field.helper && <span className="mt-1 text-xs text-neutral-500">{field.helper}</span>}
+                    {fieldSource && (
+                      <span className="mt-1 text-xs text-blue-600">
+                        Based on: {fieldSource.studyName} ({fieldSource.year})
+                        {fieldSource.pubmedId && (
+                          <a 
+                            href={`https://pubmed.ncbi.nlm.nih.gov/${fieldSource.pubmedId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-1 underline"
+                          >
+                            PubMed
+                          </a>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
           <button
@@ -753,7 +1130,7 @@ export default function NewStudyPage() {
       )}
 
       {baselineResult && (
-        <>
+        <div ref={documentsStepRef} id="step-documents">
           <SampleSizePanel sampleSize={baselineResult.sampleSize} />
 
           <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
@@ -788,14 +1165,50 @@ export default function NewStudyPage() {
 
           <RegistryPanel sheet={baselineResult.registryMapping} />
           <LiteraturePanel plan={baselineResult.literaturePlan} />
-          <CompliancePanel result={baselineResult} />
+          
+          <div ref={reviewStepRef} id="step-review">
+            <CompliancePanel result={baselineResult} />
+          </div>
 
-          <section className="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
-            <h2 className="text-lg font-semibold">Deterministic Baseline Pack</h2>
+          <section 
+            ref={downloadStepRef}
+            id="step-download"
+            className={`rounded-lg border-2 transition-all duration-300 ${
+              getCurrentStep() === 5 
+                ? "border-indigo-500 bg-indigo-50 shadow-lg" 
+                : "border-neutral-300 bg-white shadow-sm"
+            } p-4`}
+          >
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                getStepStatus(5) === "completed" 
+                  ? "bg-emerald-600 text-white" 
+                  : getStepStatus(5) === "in-progress"
+                  ? "bg-indigo-600 text-white animate-pulse"
+                  : "bg-neutral-300 text-neutral-600"
+              }`}>
+                {getStepStatus(5) === "completed" ? "✓" : "6"}
+              </span>
+              Baseline Pack Download
+            </h2>
             <p className="text-sm text-neutral-700">
               Download a zip containing protocol, SAP, consent draft, CRF schema, regulatory checklist, and registry mapping. All
               files include explicit draft disclaimers and must be reviewed by the PI and IEC.
             </p>
+            {aiAvailable === true && (
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="useAIEnhancement"
+                  checked={useAIEnhancement}
+                  onChange={(e) => setUseAIEnhancement(e.target.checked)}
+                  className="h-4 w-4 rounded border-neutral-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <label htmlFor="useAIEnhancement" className="text-sm text-neutral-700">
+                  Use AI enhancement for document narratives (recommended)
+                </label>
+              </div>
+            )}
             <div className="mt-3 text-sm text-neutral-700">
               <p>
                 Rulebook profile: <span className="font-medium">{baselineResult.versionInfo.rulebookProfile}</span> (version
@@ -828,6 +1241,23 @@ export default function NewStudyPage() {
               </label>
             )}
             {downloadError && <p className="mt-3 text-sm text-red-700">{downloadError}</p>}
+            
+            {/* Download Progress Indicator */}
+            {downloadProgress.active && (
+              <div className="mt-4 space-y-2 p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-indigo-900 font-medium">{downloadProgress.currentFile}</span>
+                  <span className="text-indigo-700 font-semibold">{downloadProgress.progress}%</span>
+                </div>
+                <div className="w-full bg-indigo-200 rounded-full h-3 overflow-hidden">
+                  <div
+                    className="bg-indigo-600 h-3 rounded-full transition-all duration-300 ease-out shadow-sm"
+                    style={{ width: `${downloadProgress.progress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
             <div className="mt-4 flex items-center gap-3">
               <button
                 type="button"
@@ -835,13 +1265,25 @@ export default function NewStudyPage() {
                 disabled={
                   downloading || !baselineResult || (hasCriticalIssues && !acknowledgeCritical)
                 }
-                className={`rounded px-4 py-2 text-sm font-semibold text-white shadow ${
+                className={`rounded px-4 py-2 text-sm font-semibold text-white shadow transition-all duration-200 flex items-center gap-2 ${
                   downloading || !baselineResult || (hasCriticalIssues && !acknowledgeCritical)
                     ? "cursor-not-allowed bg-neutral-400"
-                    : "bg-emerald-600 hover:bg-emerald-500"
+                    : "bg-emerald-600 hover:bg-emerald-500 hover:shadow-md"
                 }`}
               >
-                {downloading ? "Preparing zip..." : "Download Baseline Pack"}
+                {downloading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Preparing zip...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Baseline Pack
+                  </>
+                )}
               </button>
               <span className="text-xs uppercase tracking-wide text-neutral-500">
                 Launch workspace (coming soon; unlocks after critical issues resolved)
@@ -855,7 +1297,17 @@ export default function NewStudyPage() {
               Aurora Research OS produces deterministic drafts only. Nothing here constitutes CTRI submission, IEC approval, DCGI clearance, or legal advice. Always submit through institutional channels.
             </p>
           </section>
-        </>
+        </div>
+      )}
+      
+      {/* Download Success Toast */}
+      {downloadProgress.progress === 100 && !downloadProgress.active && (
+        <div className="fixed bottom-4 right-4 bg-emerald-600 text-white px-6 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-slide-up z-50">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="font-medium">Download complete!</span>
+        </div>
       )}
     </main>
   );

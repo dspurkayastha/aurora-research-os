@@ -38,10 +38,19 @@ export type StudyDesignConfig = {
 
 export type StatsMethodId =
   | "two-proportions"
+  | "noninferiority-proportions"
+  | "equivalence-proportions"
   | "two-means"
+  | "noninferiority-means"
+  | "equivalence-means"
   | "single-proportion-precision"
   | "time-to-event-logrank"
+  | "noninferiority-time-to-event"
+  | "equivalence-time-to-event"
   | "diagnostic-accuracy"
+  | "group-sequential"
+  | "mixed-model-lmm"
+  | "bayesian"
   | "dropout-adjustment"
   | "cluster-design-effect";
 
@@ -181,16 +190,44 @@ export const STATS_METHODS: StatsMethodConfig[] = [
   {
     id: "two-proportions",
     label: "Two Proportions",
-    description: "Power for difference in proportions between two groups.",
-    appliesTo: ["rct", "cohort", "case-control"],
+    description: "Power for difference in proportions between two groups (superiority).",
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort", "retrospective-cohort", "case-control"],
     notes: "Expose alpha, power, allocation ratio, effect size; no hidden adjustments.",
+  },
+  {
+    id: "noninferiority-proportions",
+    label: "Non-inferiority Proportions",
+    description: "Sample size for non-inferiority test of proportions (treatment not worse than control by margin).",
+    appliesTo: ["rct-2arm-parallel", "noninferiority-rct"],
+    notes: "Requires non-inferiority margin (delta). Uses Farrington-Manning method. Margin must be clinically justified.",
+  },
+  {
+    id: "equivalence-proportions",
+    label: "Equivalence Proportions (TOST)",
+    description: "Sample size for equivalence test of proportions using two one-sided tests.",
+    appliesTo: ["rct-2arm-parallel"],
+    notes: "Requires equivalence margin. Each one-sided test uses alpha/2. Larger sample size than non-inferiority.",
   },
   {
     id: "two-means",
     label: "Two Means",
-    description: "Power for difference in means across two arms.",
-    appliesTo: ["rct", "cohort"],
+    description: "Power for difference in means across two arms (superiority).",
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort", "retrospective-cohort"],
     notes: "Require SD or variance inputs and effect size definition.",
+  },
+  {
+    id: "noninferiority-means",
+    label: "Non-inferiority Means",
+    description: "Sample size for non-inferiority test of means (treatment not worse than control by margin).",
+    appliesTo: ["rct-2arm-parallel", "noninferiority-rct"],
+    notes: "Requires non-inferiority margin (delta) on the same scale as the outcome. Margin must be clinically justified.",
+  },
+  {
+    id: "equivalence-means",
+    label: "Equivalence Means (TOST)",
+    description: "Sample size for equivalence test of means using two one-sided tests.",
+    appliesTo: ["rct-2arm-parallel"],
+    notes: "Requires equivalence margin. Each one-sided test uses alpha/2. Larger sample size than non-inferiority.",
   },
   {
     id: "single-proportion-precision",
@@ -202,29 +239,64 @@ export const STATS_METHODS: StatsMethodConfig[] = [
   {
     id: "time-to-event-logrank",
     label: "Time-to-event Log-rank",
-    description: "Power for survival endpoints using log-rank test assumptions.",
-    appliesTo: ["rct", "cohort"],
+    description: "Power for survival endpoints using log-rank test assumptions (superiority).",
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort", "retrospective-cohort"],
     notes: "Require accrual, follow-up, event rates, and loss to follow-up.",
+  },
+  {
+    id: "noninferiority-time-to-event",
+    label: "Non-inferiority Time-to-event",
+    description: "Sample size for non-inferiority test of hazard ratios (treatment not worse than control by margin).",
+    appliesTo: ["rct-2arm-parallel", "noninferiority-rct"],
+    notes: "Requires non-inferiority margin on log hazard ratio scale. Margin must be clinically justified.",
+  },
+  {
+    id: "equivalence-time-to-event",
+    label: "Equivalence Time-to-event (TOST)",
+    description: "Sample size for equivalence test of hazard ratios using two one-sided tests.",
+    appliesTo: ["rct-2arm-parallel"],
+    notes: "Requires equivalence margin on log hazard ratio scale. Each one-sided test uses alpha/2.",
   },
   {
     id: "diagnostic-accuracy",
     label: "Diagnostic Accuracy",
     description: "Sample size for sensitivity, specificity, and agreement metrics.",
-    appliesTo: ["diagnostic"],
+    appliesTo: ["diagnostic-accuracy"],
     notes: "Require prevalence assumptions and target accuracy thresholds.",
+  },
+  {
+    id: "group-sequential",
+    label: "Group Sequential Design",
+    description: "Sample size adjustment for group sequential designs with interim analyses.",
+    appliesTo: ["rct-2arm-parallel", "adaptive"],
+    notes: "Requires number of interim analyses and alpha spending function (O'Brien-Fleming, Pocock, Lan-DeMets). Inflation factor applied.",
+  },
+  {
+    id: "mixed-model-lmm",
+    label: "Linear Mixed Model (LMM)",
+    description: "Sample size for linear mixed models with repeated measures, accounting for within-subject correlation.",
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort"],
+    notes: "Requires number of repeated measures and intraclass correlation (ICC). Accounts for within-subject correlation.",
+  },
+  {
+    id: "bayesian",
+    label: "Bayesian Sample Size",
+    description: "Sample size for Bayesian analysis incorporating prior information.",
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort", "retrospective-cohort"],
+    notes: "Incorporates prior information. Informative priors may reduce sample size compared to frequentist approach.",
   },
   {
     id: "dropout-adjustment",
     label: "Dropout Adjustment",
     description: "Adjusts base sample size for anticipated dropout.",
-    appliesTo: ["rct", "cohort", "single-arm"],
+    appliesTo: ["rct-2arm-parallel", "prospective-cohort", "retrospective-cohort", "single-arm"],
     notes: "Apply transparent inflation using stated retention assumptions.",
   },
   {
     id: "cluster-design-effect",
     label: "Cluster Design Effect",
     description: "Calculates design effect for cluster studies to scale sample size.",
-    appliesTo: ["cluster"],
+    appliesTo: ["cluster-rct"],
     notes: "Surface ICC, cluster size, and coefficient of variation.",
   },
 ];

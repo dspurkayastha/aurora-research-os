@@ -146,6 +146,43 @@ function unsupportedResult(
   };
 }
 
+/**
+ * Calculate inflation factor for group sequential designs
+ * Based on alpha spending functions: O'Brien-Fleming, Pocock, Lan-DeMets
+ */
+function getSequentialInflationFactor(
+  numberOfInterimAnalyses: number,
+  alphaSpendingFunction: "obrien-fleming" | "pocock" | "lan-deMets"
+): number {
+  if (numberOfInterimAnalyses <= 0) {
+    return 1.0;
+  }
+
+  // Inflation factors are approximate and depend on the alpha spending function
+  // These are conservative estimates based on common practice
+  const k = numberOfInterimAnalyses + 1; // k = number of analyses (interim + final)
+
+  switch (alphaSpendingFunction) {
+    case "obrien-fleming":
+      // O'Brien-Fleming: More conservative early, less inflation needed
+      // Approximate inflation factor: 1 + 0.01 * (k - 1)
+      return 1 + 0.01 * (k - 1);
+    
+    case "pocock":
+      // Pocock: Equal alpha at each analysis, more inflation needed
+      // Approximate inflation factor: 1 + 0.05 * (k - 1)
+      return 1 + 0.05 * (k - 1);
+    
+    case "lan-deMets":
+      // Lan-DeMets: Flexible alpha spending, intermediate inflation
+      // Approximate inflation factor: 1 + 0.03 * (k - 1)
+      return 1 + 0.03 * (k - 1);
+    
+    default:
+      return 1.0;
+  }
+}
+
 function applyDesignEffectAdjustments(
   n: number,
   assumptions: SampleSizeAssumptionsBase,
@@ -153,6 +190,20 @@ function applyDesignEffectAdjustments(
   warnings: string[]
 ): number {
   let adjusted = n;
+
+  // Sequential/group sequential design adjustment
+  if (typeof assumptions.numberOfInterimAnalyses === "number" && assumptions.numberOfInterimAnalyses > 0) {
+    const spendingFunction = assumptions.alphaSpendingFunction || "obrien-fleming";
+    const inflationFactor = getSequentialInflationFactor(
+      assumptions.numberOfInterimAnalyses,
+      spendingFunction
+    );
+    adjusted *= inflationFactor;
+    notes.push(
+      `Adjusted for ${assumptions.numberOfInterimAnalyses} interim analysis(es) using ${spendingFunction} alpha spending function ` +
+      `(inflation factor: ${inflationFactor.toFixed(3)}).`
+    );
+  }
 
   if (typeof assumptions.dropoutRate === "number") {
     if (assumptions.dropoutRate <= 0 || assumptions.dropoutRate >= 1) {
@@ -180,13 +231,6 @@ function applyDesignEffectAdjustments(
 export function computeTwoProportionsSampleSize(
   assumptions: TwoProportionsAssumptions
 ): SampleSizeResult {
-  if (assumptions.hypothesisType !== "superiority") {
-    return unsupportedResult(
-      assumptions,
-      "Two-proportion calculations currently support superiority hypotheses only."
-    );
-  }
-
   const { expectedControlEventRate: p1, expectedTreatmentEventRate: p2 } = assumptions;
 
   if (p1 == null || p2 == null) {
@@ -200,10 +244,6 @@ export function computeTwoProportionsSampleSize(
     return invalidResult(assumptions, "Event rates must be between 0 and 1.");
   }
 
-  if (Math.abs(p1 - p2) < 1e-9) {
-    return invalidResult(assumptions, "Event rates must differ to compute sample size.");
-  }
-
   const zAlpha = zFromAlpha(assumptions.alpha, assumptions.twoSided);
   const zBeta = zFromPower(assumptions.power);
 
@@ -211,20 +251,93 @@ export function computeTwoProportionsSampleSize(
     return invalidResult(assumptions, "Alpha or power inputs are outside supported ranges.");
   }
 
-  const numerator = Math.pow(zAlpha + zBeta, 2) * (p1 * (1 - p1) + p2 * (1 - p2));
-  const denominator = Math.pow(p1 - p2, 2);
-  const rawPerGroup = numerator / denominator;
-
   const notes: string[] = [];
   const warnings: string[] = [];
+  let rawPerGroup: number;
+  let description: string;
+
+  if (assumptions.hypothesisType === "noninferiority") {
+    if (typeof assumptions.nonInferiorityMargin !== "number" || assumptions.nonInferiorityMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Non-inferiority margin (delta) is required and must be positive."
+      );
+    }
+    const delta = assumptions.nonInferiorityMargin;
+    
+    // Non-inferiority: H0: p2 - p1 <= -delta vs H1: p2 - p1 > -delta
+    // Using Farrington-Manning method for non-inferiority
+    // Sample size formula: n = (z_alpha + z_beta)^2 * (p1*(1-p1) + p2*(1-p2)) / (p1 - p2 + delta)^2
+    // For non-inferiority, we test if treatment is not worse than control by more than delta
+    const effectSize = p1 - p2 + delta; // Expected difference under alternative
+    if (effectSize <= 0) {
+      return invalidResult(
+        assumptions,
+        `Non-inferiority margin (${delta}) must be less than the expected control rate minus treatment rate (${p1 - p2}).`
+      );
+    }
+    
+    rawPerGroup = Math.pow(zAlpha + zBeta, 2) * (p1 * (1 - p1) + p2 * (1 - p2)) / Math.pow(effectSize, 2);
+    description = `Two-sample comparison of proportions (non-inferiority, margin=${delta})`;
+    notes.push(`Non-inferiority margin: ${delta} (absolute difference)`);
+  } else if (assumptions.hypothesisType === "equivalence") {
+    if (typeof assumptions.equivalenceMargin !== "number" || assumptions.equivalenceMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Equivalence margin is required and must be positive."
+      );
+    }
+    const delta = assumptions.equivalenceMargin;
+    
+    // Equivalence (TOST): Test both H0: p2 - p1 <= -delta and H0: p2 - p1 >= delta
+    // Use two one-sided tests, each at alpha/2
+    const zAlphaEquiv = zFromAlpha(assumptions.alpha / 2, false); // One-sided for each test
+    const effectSize = Math.abs(p1 - p2);
+    
+    if (effectSize >= delta) {
+      warnings.push(
+        `Expected difference (${effectSize.toFixed(4)}) exceeds equivalence margin (${delta}). ` +
+        `Equivalence may not be achievable with these assumptions.`
+      );
+    }
+    
+    // Sample size for equivalence is larger than for non-inferiority
+    // Formula: n = (z_alpha/2 + z_beta)^2 * (p1*(1-p1) + p2*(1-p2)) / (delta - |p1-p2|)^2
+    const denominator = Math.pow(delta - effectSize, 2);
+    if (denominator <= 0) {
+      return invalidResult(
+        assumptions,
+        `Equivalence margin (${delta}) must be greater than the absolute difference between rates (${effectSize}).`
+      );
+    }
+    
+    rawPerGroup = Math.pow(zAlphaEquiv + zBeta, 2) * (p1 * (1 - p1) + p2 * (1 - p2)) / denominator;
+    description = `Two-sample comparison of proportions (equivalence, margin=±${delta})`;
+    notes.push(`Equivalence margin: ±${delta} (two one-sided tests)`);
+  } else if (assumptions.hypothesisType === "superiority") {
+    if (Math.abs(p1 - p2) < 1e-9) {
+      return invalidResult(assumptions, "Event rates must differ to compute sample size.");
+    }
+    const numerator = Math.pow(zAlpha + zBeta, 2) * (p1 * (1 - p1) + p2 * (1 - p2));
+    const denominator = Math.pow(p1 - p2, 2);
+    rawPerGroup = numerator / denominator;
+    description = "Two-sample comparison of proportions (superiority)";
+  } else {
+    return unsupportedResult(
+      assumptions,
+      `Hypothesis type "${assumptions.hypothesisType}" not yet supported for two-proportion calculations.`
+    );
+  }
+
   const adjustedPerGroup = applyDesignEffectAdjustments(rawPerGroup, assumptions, notes, warnings);
   const perGroup = Math.ceil(adjustedPerGroup);
   const total = perGroup * 2;
 
   return {
     status: "ok",
-    methodId: "two-proportions",
-    description: "Two-sample comparison of proportions (superiority)",
+    methodId: assumptions.hypothesisType === "noninferiority" ? "noninferiority-proportions" : 
+              assumptions.hypothesisType === "equivalence" ? "equivalence-proportions" : "two-proportions",
+    description,
     perGroupSampleSize: perGroup,
     totalSampleSize: total,
     assumptions: cloneAssumptions(assumptions),
@@ -234,13 +347,6 @@ export function computeTwoProportionsSampleSize(
 }
 
 export function computeTwoMeansSampleSize(assumptions: TwoMeansAssumptions): SampleSizeResult {
-  if (assumptions.hypothesisType !== "superiority") {
-    return unsupportedResult(
-      assumptions,
-      "Two-means calculations currently support superiority hypotheses only."
-    );
-  }
-
   if (!(typeof assumptions.assumedSD === "number" && assumptions.assumedSD > 0)) {
     return invalidResult(assumptions, "Standard deviation must be a positive number.");
   }
@@ -252,11 +358,6 @@ export function computeTwoMeansSampleSize(assumptions: TwoMeansAssumptions): Sam
     return incompleteResult(assumptions, "Both mean estimates are required.");
   }
 
-  const delta = Math.abs(assumptions.expectedMeanTreatment - assumptions.expectedMeanControl);
-  if (delta <= 0) {
-    return invalidResult(assumptions, "Means must differ to compute sample size.");
-  }
-
   const zAlpha = zFromAlpha(assumptions.alpha, assumptions.twoSided);
   const zBeta = zFromPower(assumptions.power);
 
@@ -264,20 +365,90 @@ export function computeTwoMeansSampleSize(assumptions: TwoMeansAssumptions): Sam
     return invalidResult(assumptions, "Alpha or power inputs are outside supported ranges.");
   }
 
-  const rawPerGroup =
-    (2 * Math.pow(zAlpha + zBeta, 2) * Math.pow(assumptions.assumedSD, 2)) /
-    Math.pow(delta, 2);
-
   const notes: string[] = [];
   const warnings: string[] = [];
+  let rawPerGroup: number;
+  let description: string;
+
+  if (assumptions.hypothesisType === "noninferiority") {
+    if (typeof assumptions.nonInferiorityMargin !== "number" || assumptions.nonInferiorityMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Non-inferiority margin (delta) is required and must be positive."
+      );
+    }
+    const delta = assumptions.nonInferiorityMargin;
+    const meanDiff = assumptions.expectedMeanTreatment - assumptions.expectedMeanControl;
+    
+    // Non-inferiority: H0: mu2 - mu1 <= -delta vs H1: mu2 - mu1 > -delta
+    // Sample size: n = 2 * (z_alpha + z_beta)^2 * sigma^2 / (meanDiff + delta)^2
+    const effectSize = meanDiff + delta;
+    if (effectSize <= 0) {
+      return invalidResult(
+        assumptions,
+        `Non-inferiority margin (${delta}) must be less than treatment mean minus control mean (${meanDiff}).`
+      );
+    }
+    
+    rawPerGroup = (2 * Math.pow(zAlpha + zBeta, 2) * Math.pow(assumptions.assumedSD, 2)) / Math.pow(effectSize, 2);
+    description = `Two-sample comparison of means (non-inferiority, margin=${delta})`;
+    notes.push(`Non-inferiority margin: ${delta} (absolute difference in means)`);
+  } else if (assumptions.hypothesisType === "equivalence") {
+    if (typeof assumptions.equivalenceMargin !== "number" || assumptions.equivalenceMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Equivalence margin is required and must be positive."
+      );
+    }
+    const delta = assumptions.equivalenceMargin;
+    const meanDiff = Math.abs(assumptions.expectedMeanTreatment - assumptions.expectedMeanControl);
+    
+    if (meanDiff >= delta) {
+      warnings.push(
+        `Expected difference (${meanDiff.toFixed(4)}) exceeds equivalence margin (${delta}). ` +
+        `Equivalence may not be achievable with these assumptions.`
+      );
+    }
+    
+    // Equivalence (TOST): Each test at alpha/2
+    const zAlphaEquiv = zFromAlpha(assumptions.alpha / 2, false);
+    const denominator = Math.pow(delta - meanDiff, 2);
+    
+    if (denominator <= 0) {
+      return invalidResult(
+        assumptions,
+        `Equivalence margin (${delta}) must be greater than the absolute difference between means (${meanDiff}).`
+      );
+    }
+    
+    rawPerGroup = (2 * Math.pow(zAlphaEquiv + zBeta, 2) * Math.pow(assumptions.assumedSD, 2)) / denominator;
+    description = `Two-sample comparison of means (equivalence, margin=±${delta})`;
+    notes.push(`Equivalence margin: ±${delta} (two one-sided tests)`);
+  } else if (assumptions.hypothesisType === "superiority") {
+    const delta = Math.abs(assumptions.expectedMeanTreatment - assumptions.expectedMeanControl);
+    if (delta <= 0) {
+      return invalidResult(assumptions, "Means must differ to compute sample size.");
+    }
+    rawPerGroup =
+      (2 * Math.pow(zAlpha + zBeta, 2) * Math.pow(assumptions.assumedSD, 2)) /
+      Math.pow(delta, 2);
+    description = "Two-sample comparison of means (superiority)";
+  } else {
+    return unsupportedResult(
+      assumptions,
+      `Hypothesis type "${assumptions.hypothesisType}" not yet supported for two-means calculations.`
+    );
+  }
+
   const adjustedPerGroup = applyDesignEffectAdjustments(rawPerGroup, assumptions, notes, warnings);
   const perGroup = Math.ceil(adjustedPerGroup);
   const total = perGroup * 2;
 
   return {
     status: "ok",
-    methodId: "two-means",
-    description: "Two-sample comparison of means (superiority)",
+    methodId: assumptions.hypothesisType === "noninferiority" ? "noninferiority-means" : 
+              assumptions.hypothesisType === "equivalence" ? "equivalence-means" : "two-means",
+    description,
     perGroupSampleSize: perGroup,
     totalSampleSize: total,
     assumptions: cloneAssumptions(assumptions),
@@ -332,17 +503,10 @@ export function computeSingleProportionPrecisionSampleSize(
 export function computeTimeToEventLogrankSampleSize(
   assumptions: TimeToEventAssumptions
 ): SampleSizeResult {
-  if (assumptions.hypothesisType !== "superiority") {
-    return unsupportedResult(
-      assumptions,
-      "Time-to-event calculations currently support superiority hypotheses only."
-    );
-  }
-
   const hr = assumptions.hazardRatio;
 
-  if (!(typeof hr === "number" && hr > 0 && hr !== 1)) {
-    return invalidResult(assumptions, "Hazard ratio must be positive and not equal to 1.");
+  if (!(typeof hr === "number" && hr > 0)) {
+    return invalidResult(assumptions, "Hazard ratio must be positive.");
   }
 
   const zAlpha = zFromAlpha(assumptions.alpha, assumptions.twoSided);
@@ -351,7 +515,81 @@ export function computeTimeToEventLogrankSampleSize(
     return invalidResult(assumptions, "Alpha or power inputs are outside supported ranges.");
   }
 
-  const eventsRequired = Math.pow(zAlpha + zBeta, 2) / Math.pow(Math.log(hr), 2);
+  const notes: string[] = [];
+  const warnings: string[] = [];
+  let eventsRequired: number;
+  let description: string;
+
+  if (assumptions.hypothesisType === "noninferiority") {
+    if (typeof assumptions.nonInferiorityMargin !== "number" || assumptions.nonInferiorityMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Non-inferiority margin (on log HR scale) is required and must be positive."
+      );
+    }
+    const deltaLogHR = assumptions.nonInferiorityMargin; // Margin on log hazard ratio scale
+    
+    // Non-inferiority: H0: log(HR) >= deltaLogHR vs H1: log(HR) < deltaLogHR
+    // For non-inferiority, we want to show treatment is not worse than control
+    // Expected log HR under alternative: log(hr) - deltaLogHR
+    const logHR = Math.log(hr);
+    const effectSize = Math.abs(logHR - deltaLogHR);
+    
+    if (effectSize <= 0) {
+      return invalidResult(
+        assumptions,
+        `Non-inferiority margin (${deltaLogHR}) on log HR scale must be less than |log(HR)| (${Math.abs(logHR)}).`
+      );
+    }
+    
+    eventsRequired = Math.pow(zAlpha + zBeta, 2) / Math.pow(effectSize, 2);
+    description = `Log-rank test for time-to-event (non-inferiority, margin=${deltaLogHR} on log HR scale)`;
+    notes.push(`Non-inferiority margin: ${deltaLogHR} (on log hazard ratio scale)`);
+    notes.push(`This corresponds to HR margin of ${Math.exp(deltaLogHR).toFixed(4)}`);
+  } else if (assumptions.hypothesisType === "equivalence") {
+    if (typeof assumptions.equivalenceMargin !== "number" || assumptions.equivalenceMargin <= 0) {
+      return incompleteResult(
+        assumptions,
+        "Equivalence margin (on log HR scale) is required and must be positive."
+      );
+    }
+    const deltaLogHR = assumptions.equivalenceMargin;
+    const logHR = Math.abs(Math.log(hr));
+    
+    if (logHR >= deltaLogHR) {
+      warnings.push(
+        `Expected |log(HR)| (${logHR.toFixed(4)}) exceeds equivalence margin (${deltaLogHR}). ` +
+        `Equivalence may not be achievable with these assumptions.`
+      );
+    }
+    
+    // Equivalence (TOST): Each test at alpha/2
+    const zAlphaEquiv = zFromAlpha(assumptions.alpha / 2, false);
+    const denominator = Math.pow(deltaLogHR - logHR, 2);
+    
+    if (denominator <= 0) {
+      return invalidResult(
+        assumptions,
+        `Equivalence margin (${deltaLogHR}) must be greater than |log(HR)| (${logHR}).`
+      );
+    }
+    
+    eventsRequired = Math.pow(zAlphaEquiv + zBeta, 2) / denominator;
+    description = `Log-rank test for time-to-event (equivalence, margin=±${deltaLogHR} on log HR scale)`;
+    notes.push(`Equivalence margin: ±${deltaLogHR} (on log hazard ratio scale, two one-sided tests)`);
+    notes.push(`This corresponds to HR margin of ${Math.exp(deltaLogHR).toFixed(4)}`);
+  } else if (assumptions.hypothesisType === "superiority") {
+    if (hr === 1) {
+      return invalidResult(assumptions, "Hazard ratio must not equal 1 for superiority test.");
+    }
+    eventsRequired = Math.pow(zAlpha + zBeta, 2) / Math.pow(Math.log(hr), 2);
+    description = "Log-rank test power for time-to-event endpoint (superiority)";
+  } else {
+    return unsupportedResult(
+      assumptions,
+      `Hypothesis type "${assumptions.hypothesisType}" not yet supported for time-to-event calculations.`
+    );
+  }
 
   if (typeof assumptions.eventProportionDuringFollowUp !== "number") {
     return incompleteResult(
@@ -369,8 +607,6 @@ export function computeTimeToEventLogrankSampleSize(
     );
   }
 
-  const notes: string[] = [];
-  const warnings: string[] = [];
   let total = eventsRequired / eventProportion;
   total = applyDesignEffectAdjustments(total, assumptions, notes, warnings);
   const roundedEvents = Math.ceil(eventsRequired);
@@ -378,8 +614,9 @@ export function computeTimeToEventLogrankSampleSize(
 
   return {
     status: "ok",
-    methodId: "time-to-event-logrank",
-    description: "Log-rank test power for time-to-event endpoint",
+    methodId: assumptions.hypothesisType === "noninferiority" ? "noninferiority-time-to-event" : 
+              assumptions.hypothesisType === "equivalence" ? "equivalence-time-to-event" : "time-to-event-logrank",
+    description,
     eventsRequired: roundedEvents,
     totalSampleSize: roundedTotal,
     assumptions: cloneAssumptions(assumptions),
@@ -446,6 +683,168 @@ export function computeDiagnosticAccuracySampleSize(
     status: "ok",
     methodId: "diagnostic-accuracy",
     description: "Precision for diagnostic accuracy metric",
+    totalSampleSize: total,
+    assumptions: cloneAssumptions(assumptions),
+    warnings,
+    notes
+  };
+}
+
+/**
+ * Compute sample size for linear mixed model (LMM) with repeated measures
+ * Accounts for within-subject correlation and between-subject variability
+ */
+export function computeMixedModelSampleSize(
+  assumptions: TwoMeansAssumptions
+): SampleSizeResult {
+  if (!(typeof assumptions.assumedSD === "number" && assumptions.assumedSD > 0)) {
+    return invalidResult(assumptions, "Standard deviation must be a positive number.");
+  }
+
+  if (
+    !(typeof assumptions.expectedMeanControl === "number") ||
+    !(typeof assumptions.expectedMeanTreatment === "number")
+  ) {
+    return incompleteResult(assumptions, "Both mean estimates are required.");
+  }
+
+  const numberOfRepeatedMeasures = assumptions.numberOfRepeatedMeasures || 1;
+  const icc = assumptions.intraclassCorrelation || 0.5; // Default ICC if not specified
+
+  if (icc < 0 || icc >= 1) {
+    return invalidResult(assumptions, "Intraclass correlation must be between 0 and 1 (exclusive).");
+  }
+
+  const zAlpha = zFromAlpha(assumptions.alpha, assumptions.twoSided);
+  const zBeta = zFromPower(assumptions.power);
+
+  if (!Number.isFinite(zAlpha) || !Number.isFinite(zBeta)) {
+    return invalidResult(assumptions, "Alpha or power inputs are outside supported ranges.");
+  }
+
+  const delta = Math.abs(assumptions.expectedMeanTreatment - assumptions.expectedMeanControl);
+  if (delta <= 0) {
+    return invalidResult(assumptions, "Means must differ to compute sample size.");
+  }
+
+  // LMM sample size formula accounting for repeated measures and ICC
+  // Effective variance = sigma^2 * (1 + (m-1)*ICC) / m
+  // where m = number of repeated measures
+  const effectiveVariance = Math.pow(assumptions.assumedSD, 2) * (1 + (numberOfRepeatedMeasures - 1) * icc) / numberOfRepeatedMeasures;
+  
+  const rawPerGroup = (2 * Math.pow(zAlpha + zBeta, 2) * effectiveVariance) / Math.pow(delta, 2);
+
+  const notes: string[] = [];
+  const warnings: string[] = [];
+  notes.push(`Linear mixed model with ${numberOfRepeatedMeasures} repeated measure(s) per subject`);
+  notes.push(`Intraclass correlation (ICC): ${icc.toFixed(3)}`);
+  
+  const adjustedPerGroup = applyDesignEffectAdjustments(rawPerGroup, assumptions, notes, warnings);
+  const perGroup = Math.ceil(adjustedPerGroup);
+  const total = perGroup * 2;
+
+  return {
+    status: "ok",
+    methodId: "mixed-model-lmm",
+    description: `Linear mixed model with repeated measures (${numberOfRepeatedMeasures} per subject)`,
+    perGroupSampleSize: perGroup,
+    totalSampleSize: total,
+    assumptions: cloneAssumptions(assumptions),
+    warnings,
+    notes
+  };
+}
+
+/**
+ * Compute sample size for Bayesian analysis
+ * Uses prior information to potentially reduce sample size requirements
+ */
+export function computeBayesianSampleSize(
+  assumptions: TwoMeansAssumptions | TwoProportionsAssumptions
+): SampleSizeResult {
+  const zAlpha = zFromAlpha(assumptions.alpha, assumptions.twoSided);
+  const zBeta = zFromPower(assumptions.power);
+
+  if (!Number.isFinite(zAlpha) || !Number.isFinite(zBeta)) {
+    return invalidResult(assumptions, "Alpha or power inputs are outside supported ranges.");
+  }
+
+  const notes: string[] = [];
+  const warnings: string[] = [];
+  
+  // Bayesian sample size calculation incorporates prior information
+  // If prior is informative, sample size may be reduced
+  // If prior is vague/uninformative, sample size approaches frequentist
+  const priorVariance = assumptions.priorVariance || Infinity; // Default to uninformative
+  
+  let rawPerGroup: number;
+  let description: string;
+
+  if ("expectedMeanControl" in assumptions && "expectedMeanTreatment" in assumptions && "assumedSD" in assumptions) {
+    // Bayesian for means
+    const meanAssumptions = assumptions as TwoMeansAssumptions;
+    if (typeof meanAssumptions.expectedMeanControl !== "number" || typeof meanAssumptions.expectedMeanTreatment !== "number" || typeof meanAssumptions.assumedSD !== "number") {
+      return incompleteResult(assumptions, "Both mean estimates and standard deviation are required.");
+    }
+    
+    const delta = Math.abs(meanAssumptions.expectedMeanTreatment - meanAssumptions.expectedMeanControl);
+    if (delta <= 0) {
+      return invalidResult(assumptions, "Means must differ to compute sample size.");
+    }
+
+    // Bayesian sample size with prior: n = 2 * (z_alpha + z_beta)^2 * (sigma^2 + prior_variance) / delta^2
+    // If prior is informative (small variance), sample size is reduced
+    const effectiveVariance = Math.pow(meanAssumptions.assumedSD, 2) + (priorVariance === Infinity ? 0 : priorVariance);
+    rawPerGroup = (2 * Math.pow(zAlpha + zBeta, 2) * effectiveVariance) / Math.pow(delta, 2);
+    description = "Bayesian sample size for two-sample comparison of means";
+    
+    if (priorVariance !== Infinity) {
+      notes.push(`Informative prior variance: ${priorVariance.toFixed(4)}`);
+      notes.push("Prior information may reduce required sample size compared to frequentist approach");
+    } else {
+      notes.push("Uninformative prior (approximates frequentist sample size)");
+    }
+  } else if ("expectedControlEventRate" in assumptions && "expectedTreatmentEventRate" in assumptions) {
+    // Bayesian for proportions
+    const p1 = assumptions.expectedControlEventRate;
+    const p2 = assumptions.expectedTreatmentEventRate;
+    
+    if (!(p1 > 0 && p1 < 1) || !(p2 > 0 && p2 < 1)) {
+      return invalidResult(assumptions, "Event rates must be between 0 and 1.");
+    }
+
+    // Bayesian sample size for proportions (approximate)
+    // Uses beta prior, approximated by normal
+    const pooledVariance = (p1 * (1 - p1) + p2 * (1 - p2)) / 2;
+    const effectiveVariance = pooledVariance + (priorVariance === Infinity ? 0 : priorVariance);
+    const delta = Math.abs(p1 - p2);
+    
+    if (delta <= 0) {
+      return invalidResult(assumptions, "Event rates must differ to compute sample size.");
+    }
+    
+    rawPerGroup = Math.pow(zAlpha + zBeta, 2) * effectiveVariance / Math.pow(delta, 2);
+    description = "Bayesian sample size for two-sample comparison of proportions";
+    
+    if (priorVariance !== Infinity) {
+      notes.push(`Informative prior variance: ${priorVariance.toFixed(4)}`);
+      notes.push("Prior information may reduce required sample size compared to frequentist approach");
+    } else {
+      notes.push("Uninformative prior (approximates frequentist sample size)");
+    }
+  } else {
+    return incompleteResult(assumptions, "Bayesian calculations require either means or proportions assumptions.");
+  }
+
+  const adjustedPerGroup = applyDesignEffectAdjustments(rawPerGroup, assumptions, notes, warnings);
+  const perGroup = Math.ceil(adjustedPerGroup);
+  const total = perGroup * 2;
+
+  return {
+    status: "ok",
+    methodId: "bayesian",
+    description,
+    perGroupSampleSize: perGroup,
     totalSampleSize: total,
     assumptions: cloneAssumptions(assumptions),
     warnings,

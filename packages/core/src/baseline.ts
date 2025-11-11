@@ -12,6 +12,7 @@ import { buildProtocolDraft } from "./protocol";
 import { buildRegulatoryChecklist, buildRegistryMappingSheet } from "./regulatory";
 import { buildSAPPlan, generatePlainLanguageStatsExplanation } from "./sap";
 import { computeSampleSizeForStudy } from "./stats";
+import { getResearchBackedDefaults } from "./research-defaults";
 import type {
   BaselineBuildResult,
   BaselinePackage,
@@ -42,6 +43,14 @@ function mergeAssumptions(
       ? "estimation"
       : "superiority";
 
+  // Get research-backed defaults
+  const researchDefaults = getResearchBackedDefaults(
+    studySpec.condition,
+    studySpec.designId,
+    studySpec.primaryEndpoint?.type
+  );
+
+  // Merge: user input > research defaults > system defaults
   return {
     alpha: partial?.alpha ?? 0.05,
     power: partial?.power ?? 0.8,
@@ -50,24 +59,38 @@ function mergeAssumptions(
     designId: studySpec.designId ?? partial?.designId ?? "prospective-cohort",
     primaryEndpointType:
       studySpec.primaryEndpoint?.type ?? partial?.primaryEndpointType ?? "binary",
-    expectedControlEventRate: partial?.expectedControlEventRate,
-    expectedTreatmentEventRate: partial?.expectedTreatmentEventRate,
-    expectedMeanControl: partial?.expectedMeanControl,
-    expectedMeanTreatment: partial?.expectedMeanTreatment,
-    assumedSD: partial?.assumedSD,
-    expectedProportion: partial?.expectedProportion,
-    hazardRatio: partial?.hazardRatio,
-    eventProportionDuringFollowUp: partial?.eventProportionDuringFollowUp,
-    precision: partial?.precision,
-    dropoutRate: partial?.dropoutRate,
-    clusterDesignEffect: partial?.clusterDesignEffect,
-    caseControlRatio: partial?.caseControlRatio,
-    exposurePrevInControls: partial?.exposurePrevInControls,
-    targetMetric: partial?.targetMetric,
-    expectedSensitivity: partial?.expectedSensitivity,
-    expectedSpecificity: partial?.expectedSpecificity,
+    expectedControlEventRate: partial?.expectedControlEventRate ?? researchDefaults.assumptions.expectedControlEventRate,
+    expectedTreatmentEventRate: partial?.expectedTreatmentEventRate ?? researchDefaults.assumptions.expectedTreatmentEventRate,
+    expectedMeanControl: partial?.expectedMeanControl ?? researchDefaults.assumptions.expectedMeanControl,
+    expectedMeanTreatment: partial?.expectedMeanTreatment ?? researchDefaults.assumptions.expectedMeanTreatment,
+    assumedSD: partial?.assumedSD ?? researchDefaults.assumptions.assumedSD,
+    expectedProportion: partial?.expectedProportion ?? researchDefaults.assumptions.expectedProportion,
+    hazardRatio: partial?.hazardRatio ?? researchDefaults.assumptions.hazardRatio,
+    eventProportionDuringFollowUp: partial?.eventProportionDuringFollowUp ?? researchDefaults.assumptions.eventProportionDuringFollowUp,
+    precision: partial?.precision ?? researchDefaults.assumptions.precision,
+    dropoutRate: partial?.dropoutRate ?? researchDefaults.assumptions.dropoutRate,
+    clusterDesignEffect: partial?.clusterDesignEffect ?? researchDefaults.assumptions.clusterDesignEffect,
+    caseControlRatio: partial?.caseControlRatio ?? researchDefaults.assumptions.caseControlRatio,
+    exposurePrevInControls: partial?.exposurePrevInControls ?? researchDefaults.assumptions.exposurePrevInControls,
+    targetMetric: partial?.targetMetric ?? researchDefaults.assumptions.targetMetric,
+    expectedSensitivity: partial?.expectedSensitivity ?? researchDefaults.assumptions.expectedSensitivity,
+    expectedSpecificity: partial?.expectedSpecificity ?? researchDefaults.assumptions.expectedSpecificity,
     notes: partial?.notes ? [...partial.notes] : [],
   };
+}
+
+/**
+ * Get research sources for sample size assumptions
+ */
+export function getResearchSourcesForAssumptions(
+  studySpec: StudySpec
+): import("./research-defaults").ResearchSource[] {
+  const researchDefaults = getResearchBackedDefaults(
+    studySpec.condition,
+    studySpec.designId,
+    studySpec.primaryEndpoint?.type
+  );
+  return researchDefaults.sources;
 }
 
 function placeholderSampleSize(

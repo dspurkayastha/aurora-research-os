@@ -20,7 +20,8 @@ export {
 } from "./rulebook";
 
 export * from "./types";
-export * from "./orchestrator";
+// Re-export orchestrator functions
+export { parseIdeaToPreSpec, chooseDesign, buildBaselineSpec } from "./orchestrator";
 export * from "./stats";
 export * from "./sap";
 export * from "./protocol";
@@ -29,4 +30,7 @@ export * from "./pis_icf";
 export * from "./regulatory";
 export * from "./literature";
 export * from "./iec";
-export * from "./baseline";
+// Re-export baseline functions
+export { buildBaselinePackageFromIdea, canLockAndLaunch, getResearchSourcesForAssumptions } from "./baseline";
+export * from "./research-defaults";
+export * from "./document-formatting";

@@ -3,6 +3,7 @@ import type {
   EndpointSpec,
   SAPEndpointPlan,
   SAPPlan,
+  SampleSizeAssumptionsBase,
   SampleSizeResult,
   StatsExplanation,
   StudySpec,
@@ -248,6 +249,95 @@ function buildEndpointPlans(
   });
 }
 
+/**
+ * Generate multiplicity adjustment strategy text based on assumptions
+ */
+function generateMultiplicityStrategy(
+  assumptions: SampleSizeAssumptionsBase,
+  numberOfEndpoints: number
+): string {
+  const method = assumptions.multiplicityAdjustmentMethod || "none";
+  const numPrimary = assumptions.numberOfPrimaryEndpoints || 1;
+  const numSecondary = assumptions.numberOfSecondaryEndpoints || (numberOfEndpoints - numPrimary);
+
+  if (method === "none" || numPrimary === 1) {
+    return "Primary endpoint tested at two-sided alpha 0.05. Secondary endpoints exploratory unless alpha allocation specified.";
+  }
+
+  let strategy = `Multiplicity adjustment for ${numPrimary} primary endpoint(s): `;
+
+  switch (method) {
+    case "bonferroni":
+      const bonfAlpha = 0.05 / numPrimary;
+      strategy += `Bonferroni correction applied. Each primary endpoint tested at alpha = ${bonfAlpha.toFixed(4)} (0.05 / ${numPrimary}). `;
+      strategy += "This is conservative and controls family-wise error rate (FWER).";
+      break;
+    
+    case "holm":
+      strategy += `Holm-Bonferroni step-down procedure applied. This is less conservative than Bonferroni while still controlling FWER. `;
+      strategy += `Endpoints tested in order of importance, with adjusted alpha levels.`;
+      break;
+    
+    case "hochberg":
+      strategy += `Hochberg step-up procedure applied. This is less conservative than Holm and controls FWER under independence assumption. `;
+      strategy += `Endpoints tested in order of p-values, with adjusted alpha levels.`;
+      break;
+    
+    case "fdr":
+      strategy += `False Discovery Rate (FDR) control using Benjamini-Hochberg procedure. `;
+      strategy += `This controls the expected proportion of false discoveries rather than FWER, allowing more discoveries. `;
+      strategy += `Appropriate when multiple endpoints are of interest and some false positives are acceptable.`;
+      break;
+    
+    default:
+      strategy = "Primary endpoint tested at two-sided alpha 0.05. Secondary endpoints exploratory unless alpha allocation specified.";
+  }
+
+  if (numSecondary > 0) {
+    strategy += ` ${numSecondary} secondary endpoint(s) will be analyzed as exploratory unless specified otherwise.`;
+  }
+
+  return strategy;
+}
+
+/**
+ * Generate interim analysis plan text based on assumptions
+ */
+function generateInterimAnalysisPlan(
+  assumptions: SampleSizeAssumptionsBase
+): string {
+  const numInterim = assumptions.numberOfInterimAnalyses || 0;
+  const spendingFunction = assumptions.alphaSpendingFunction || "obrien-fleming";
+
+  if (numInterim === 0) {
+    return "No formal interim analyses planned unless specified by PI/statistician.";
+  }
+
+  let plan = `${numInterim} interim analysis(ies) planned using ${spendingFunction} alpha spending function. `;
+
+  switch (spendingFunction) {
+    case "obrien-fleming":
+      plan += "O'Brien-Fleming boundaries: more conservative early stopping, less conservative later. ";
+      plan += "Appropriate when early stopping is only desired for very strong effects.";
+      break;
+    
+    case "pocock":
+      plan += "Pocock boundaries: equal alpha at each analysis. ";
+      plan += "More liberal early stopping compared to O'Brien-Fleming. ";
+      plan += "Requires larger sample size inflation.";
+      break;
+    
+    case "lan-deMets":
+      plan += "Lan-DeMets flexible alpha spending: allows custom spending functions. ";
+      plan += "Provides flexibility to adapt spending based on accumulating data.";
+      break;
+  }
+
+  plan += "Interim analysis stopping rules, data monitoring committee (DMC) composition, and unblinding procedures must be specified in the protocol and DMC charter.";
+
+  return plan;
+}
+
 export function buildSAPPlan(studySpec: StudySpec, sampleSize: SampleSizeResult): SAPPlan {
   const warnings: string[] = [];
 
@@ -266,19 +356,29 @@ export function buildSAPPlan(studySpec: StudySpec, sampleSize: SampleSizeResult)
   }
 
   const endpointPlans = buildEndpointPlans(studySpec, warnings);
+  const numberOfEndpoints = endpointPlans.length;
+
+  // Generate multiplicity strategy from sample size assumptions
+  const multiplicityStrategy = generateMultiplicityStrategy(sampleSize.assumptions, numberOfEndpoints);
+  
+  // Generate interim analysis plan from assumptions
+  const interimPlan = generateInterimAnalysisPlan(sampleSize.assumptions);
 
   return {
     analysisSets: { ...DEFAULT_ANALYSIS_SETS },
     endpoints: endpointPlans,
-    multiplicity:
-      "Primary endpoint tested at two-sided alpha 0.05. Secondary endpoints exploratory unless alpha allocation specified.",
-    interimAnalysis: "No formal interim analyses planned unless specified by PI/statistician.",
-    subgroupAnalyses: "Exploratory subgroup analyses based on pre-specified demographic or clinical factors.",
+    multiplicity: multiplicityStrategy,
+    interimAnalysis: interimPlan,
+    subgroupAnalyses: "Exploratory subgroup analyses based on pre-specified demographic or clinical factors. " +
+      "Subgroup analyses should be pre-specified in the protocol and interpreted cautiously due to multiple testing concerns.",
     sensitivityAnalyses:
-      "Perform sensitivity analyses for missing data assumptions, protocol deviations, and alternative model specifications.",
+      "Perform sensitivity analyses for missing data assumptions, protocol deviations, and alternative model specifications. " +
+      "Sensitivity analyses include: multiple imputation, worst-case scenarios, per-protocol analysis, and alternative statistical models.",
     missingDataGeneral:
-      "Document missing data patterns. Apply multiple imputation or sensitivity analyses where material to conclusions.",
-    software: "R / Python / SAS / Stata — final selection by responsible statistician.",
+      "Document missing data patterns. Apply multiple imputation or sensitivity analyses where material to conclusions. " +
+      "Missing data mechanisms (MCAR, MAR, MNAR) should be assessed. Primary analysis should use appropriate methods (e.g., mixed models for MAR, pattern-mixture models for MNAR).",
+    software: "R / Python / SAS / Stata — final selection by responsible statistician. " +
+      "Statistical software version and packages should be documented. Reproducible analysis code should be maintained.",
     warnings,
   };
 }

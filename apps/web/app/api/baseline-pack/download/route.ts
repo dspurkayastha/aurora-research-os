@@ -14,6 +14,7 @@ type DownloadRequest = {
   idea: string;
   assumptions?: Partial<SampleSizeAssumptionsBase>;
   acknowledgeCritical?: boolean;
+  useAIEnhancement?: boolean;
 };
 
 function sanitizeAssumptions(
@@ -104,7 +105,37 @@ export async function POST(request: Request): Promise<NextResponse> {
   const assumptions = sanitizeAssumptions(payload.assumptions);
 
   try {
-    const baseline = buildBaselinePackageFromIdea(idea, assumptions);
+    // If AI enhancement is requested, get enhanced baseline from API service
+    let baseline: any;
+    if (payload.useAIEnhancement) {
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      try {
+        const apiResponse = await fetch(`${API_BASE_URL}/preview/baseline`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idea,
+            assumptions,
+            useAIEnhancement: true,
+          }),
+        });
+        
+        if (apiResponse.ok) {
+          baseline = await apiResponse.json();
+        } else {
+          // Fallback to deterministic if API fails
+          console.warn("AI enhancement failed, using deterministic baseline");
+          baseline = buildBaselinePackageFromIdea(idea, assumptions);
+        }
+      } catch (apiError) {
+        // Fallback to deterministic if API is unavailable
+        console.warn("AI enhancement unavailable, using deterministic baseline:", apiError);
+        baseline = buildBaselinePackageFromIdea(idea, assumptions);
+      }
+    } else {
+      baseline = buildBaselinePackageFromIdea(idea, assumptions);
+    }
+    
     const blockingIssues = getBlockingIssues(baseline);
 
     if (blockingIssues.length > 0 && !payload.acknowledgeCritical) {

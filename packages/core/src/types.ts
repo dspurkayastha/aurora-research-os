@@ -111,6 +111,22 @@ export interface SampleSizeAssumptionsBase {
   targetMetric?: "sensitivity" | "specificity" | "both";
   expectedSensitivity?: number;
   expectedSpecificity?: number;
+  // Non-inferiority/equivalence margins
+  nonInferiorityMargin?: number; // For proportions: absolute difference; for means: absolute difference; for HR: log(HR) margin
+  equivalenceMargin?: number; // Two-sided equivalence margin (symmetric)
+  // Sequential/adaptive design parameters
+  numberOfInterimAnalyses?: number;
+  alphaSpendingFunction?: "obrien-fleming" | "pocock" | "lan-deMets";
+  // Mixed model parameters
+  intraclassCorrelation?: number; // For repeated measures/cluster designs
+  numberOfRepeatedMeasures?: number;
+  // Bayesian parameters
+  priorEffectSize?: number;
+  priorVariance?: number;
+  // Multiplicity adjustment
+  numberOfPrimaryEndpoints?: number;
+  numberOfSecondaryEndpoints?: number;
+  multiplicityAdjustmentMethod?: "bonferroni" | "holm" | "fdr" | "hochberg" | "none";
   notes?: string[];
 }
 
