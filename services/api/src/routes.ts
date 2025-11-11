@@ -13,9 +13,28 @@ const {
   parseStudyIdea,
   selectStudyDesign,
   generateRecentReferences,
+  generateClarifyingQuestions,
 } = require("./llm");
 
 const router = Router();
+
+router.get("/", (_req: any, res: any) => {
+  res.json({ 
+    service: "Aurora Research OS API",
+    version: "1.0.0",
+    status: "running",
+    endpoints: {
+      health: "/health",
+      llm: {
+        status: "/llm/status",
+        parseIdea: "POST /llm/parse-idea",
+        selectDesign: "POST /llm/select-design",
+        generateQuestions: "POST /llm/generate-questions",
+        generateContent: "POST /llm/generate-content"
+      }
+    }
+  });
+});
 
 router.get("/health", (_req: any, res: any) => {
   res.json({ status: "ok" });
@@ -130,6 +149,25 @@ router.post("/llm/select-design", async (req: any, res: any) => {
     validateAIAvailability();
     const result = await selectStudyDesign(preSpec, idea);
     res.json(result);
+  } catch (error) {
+    res.status(503).json({ 
+      error: "AI service unavailable", 
+      details: error instanceof Error ? error.message : String(error) 
+    });
+  }
+});
+
+router.post("/llm/generate-questions", async (req: any, res: any) => {
+  const { preSpec, idea } = req.body ?? {};
+  
+  if (!preSpec || typeof idea !== "string") {
+    return res.status(400).json({ error: "preSpec and idea are required" });
+  }
+
+  try {
+    validateAIAvailability();
+    const questions = await generateClarifyingQuestions(preSpec, idea);
+    res.json({ questions });
   } catch (error) {
     res.status(503).json({ 
       error: "AI service unavailable", 

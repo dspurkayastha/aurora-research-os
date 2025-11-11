@@ -9,7 +9,7 @@ export default function HomePage() {
         </h1>
         <p className="text-lg text-slate-600">
           Aurora interprets your study concept and drafts baseline protocols, sample size notes, and consent packages aligned
-          with the India v1 regulatory profile.
+          with Indian clinical research guidelines (ICMR, CTRI, Indian GCP/NDCT, ICH E6(R3)).
         </p>
         <p className="text-slate-600">
           Start with a narrative idea, review the suggested design, and progress through sample size, documents, compliance,

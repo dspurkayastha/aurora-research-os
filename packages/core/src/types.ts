@@ -28,6 +28,15 @@ export interface ValidationIssue {
   acknowledged?: boolean;
 }
 
+export interface ClarifyingQuestion {
+  id: string;
+  question: string;
+  priority: "critical" | "important" | "optional";
+  field?: string; // Which PreSpec field this question relates to
+  answer?: string;
+  skipped?: boolean;
+}
+
 export interface PreSpec {
   rawIdea: string;
   condition?: string;
@@ -38,6 +47,8 @@ export interface PreSpec {
   isRetrospectiveHint?: boolean;
   isDiagnosticHint?: boolean;
   mentionsInterventionOrComparison?: boolean;
+  clarifyingQuestions?: ClarifyingQuestion[];
+  selectedLanguages?: string[]; // For PIS/ICF language selection
 }
 
 export type StudyDesignId = RulebookStudyDesignId;

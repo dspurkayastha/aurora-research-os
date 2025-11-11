@@ -29,17 +29,57 @@ export interface DesignSelectionResult {
 }
 
 /**
+ * Helper function to safely parse JSON response
+ */
+async function safeJsonParse(response: Response): Promise<any> {
+  const contentType = response.headers.get("content-type");
+  
+  if (!contentType || !contentType.includes("application/json")) {
+    const text = await response.text();
+    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+      throw new Error(
+        `API server returned an HTML page instead of JSON. This usually means:\n` +
+        `1. The API server is not running (check http://localhost:3001)\n` +
+        `2. The endpoint doesn't exist (404 error)\n` +
+        `3. There's a server error (500 error)\n\n` +
+        `Please ensure the API server is running and accessible.`
+      );
+    }
+    throw new Error(`Expected JSON but received ${contentType}. Response: ${text.substring(0, 200)}`);
+  }
+  
+  return response.json();
+}
+
+/**
  * Check AI availability
  */
 export async function checkAIAvailability(): Promise<AIStatus> {
   try {
     const response = await fetch(`${API_BASE_URL}/llm/status`);
     if (!response.ok) {
-      return { available: false, reason: `API returned ${response.status}` };
+      try {
+        const errorData = await safeJsonParse(response);
+        return { 
+          available: false, 
+          reason: errorData.details || errorData.error || `API returned ${response.status}` 
+        };
+      } catch (parseError) {
+        return { 
+          available: false, 
+          reason: `API server error (${response.status}). Please check if the API server is running at ${API_BASE_URL}` 
+        };
+      }
     }
-    const data = await response.json();
+    const data = await safeJsonParse(response);
     return data as AIStatus;
   } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      return {
+        available: false,
+        reason: `Cannot connect to API server at ${API_BASE_URL}. Please ensure the API server is running.`,
+      };
+    }
     return {
       available: false,
       reason: error instanceof Error ? error.message : "Network error",
@@ -51,18 +91,38 @@ export async function checkAIAvailability(): Promise<AIStatus> {
  * Parse study idea with AI (MANDATORY)
  */
 export async function parseIdeaWithAI(idea: string): Promise<PreSpec> {
-  const response = await fetch(`${API_BASE_URL}/llm/parse-idea`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idea }),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/llm/parse-idea`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idea }),
+    });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.details || error.error || "AI parsing failed");
+    if (!response.ok) {
+      try {
+        const error = await safeJsonParse(response);
+        throw new Error(error.details || error.error || `AI parsing failed (${response.status})`);
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message.includes("HTML page")) {
+          throw parseError;
+        }
+        throw new Error(
+          `Failed to parse study idea. API server returned ${response.status}. ` +
+          `Please ensure the API server is running at ${API_BASE_URL}`
+        );
+      }
+    }
+
+    return await safeJsonParse(response);
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Cannot connect to API server at ${API_BASE_URL}. ` +
+        `Please ensure the API server is running and accessible.`
+      );
+    }
+    throw error;
   }
-
-  return response.json();
 }
 
 /**
@@ -72,18 +132,82 @@ export async function selectDesignWithAI(
   preSpec: PreSpec,
   idea: string
 ): Promise<DesignSelectionResult> {
-  const response = await fetch(`${API_BASE_URL}/llm/select-design`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preSpec, idea }),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/llm/select-design`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preSpec, idea }),
+    });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.details || error.error || "AI design selection failed");
+    if (!response.ok) {
+      try {
+        const error = await safeJsonParse(response);
+        throw new Error(error.details || error.error || `AI design selection failed (${response.status})`);
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message.includes("HTML page")) {
+          throw parseError;
+        }
+        throw new Error(
+          `Failed to select study design. API server returned ${response.status}. ` +
+          `Please ensure the API server is running at ${API_BASE_URL}`
+        );
+      }
+    }
+
+    return await safeJsonParse(response);
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Cannot connect to API server at ${API_BASE_URL}. ` +
+        `Please ensure the API server is running and accessible.`
+      );
+    }
+    throw error;
   }
+}
 
-  return response.json();
+/**
+ * Get clarifying questions based on parsed PreSpec
+ */
+export async function getClarifyingQuestions(preSpec: PreSpec, idea: string): Promise<Array<{
+  id: string;
+  question: string;
+  priority: "critical" | "important" | "optional";
+  field?: string;
+}>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/llm/generate-questions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preSpec, idea }),
+    });
+
+    if (!response.ok) {
+      try {
+        const error = await safeJsonParse(response);
+        throw new Error(error.details || error.error || `Failed to generate clarifying questions (${response.status})`);
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message.includes("HTML page")) {
+          throw parseError;
+        }
+        throw new Error(
+          `Failed to generate clarifying questions. API server returned ${response.status}. ` +
+          `Please ensure the API server is running at ${API_BASE_URL}`
+        );
+      }
+    }
+
+    const data = await safeJsonParse(response);
+    return data.questions || [];
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Cannot connect to API server at ${API_BASE_URL}. ` +
+        `Please ensure the API server is running and accessible.`
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -100,26 +224,46 @@ export async function generateContent(
     currentCRFStructure?: string;
   }
 ): Promise<string | { layoutSuggestions: string; fieldRecommendations: Array<{ field: string; rationale: string }> }> {
-  const response = await fetch(`${API_BASE_URL}/llm/generate-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type,
-      studySpec,
-      baseline: options?.baseline,
-      section: options?.section,
-      existingContent: options?.existingContent,
-      targetLanguage: options?.targetLanguage,
-      currentCRFStructure: options?.currentCRFStructure,
-    }),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/llm/generate-content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type,
+        studySpec,
+        baseline: options?.baseline,
+        section: options?.section,
+        existingContent: options?.existingContent,
+        targetLanguage: options?.targetLanguage,
+        currentCRFStructure: options?.currentCRFStructure,
+      }),
+    });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.details || error.error || "AI generation failed");
+    if (!response.ok) {
+      try {
+        const error = await safeJsonParse(response);
+        throw new Error(error.details || error.error || `AI generation failed (${response.status})`);
+      } catch (parseError) {
+        if (parseError instanceof Error && parseError.message.includes("HTML page")) {
+          throw parseError;
+        }
+        throw new Error(
+          `Failed to generate content. API server returned ${response.status}. ` +
+          `Please ensure the API server is running at ${API_BASE_URL}`
+        );
+      }
+    }
+
+    const data = await safeJsonParse(response);
+    return data.content || data;
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Cannot connect to API server at ${API_BASE_URL}. ` +
+        `Please ensure the API server is running and accessible.`
+      );
+    }
+    throw error;
   }
-
-  const data = await response.json();
-  return data.content || data;
 }
 

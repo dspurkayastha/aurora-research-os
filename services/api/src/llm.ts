@@ -330,12 +330,12 @@ Return JSON with:
 /**
  * PROMPT: Generate protocol section with fact-checking
  */
-const PROMPT_GENERATE_PROTOCOL_SECTION = `You are helping draft a clinical research protocol section for a study in India.
+const PROMPT_GENERATE_PROTOCOL_SECTION = `You are drafting a comprehensive clinical research protocol section for a study in India. Write in natural, professional prose suitable for regulatory submission.
 
 CRITICAL CONSTRAINTS:
-- You are filling content within an EXISTING TEMPLATE STRUCTURE
-- Do NOT modify, delete, or change: section headers, section order, required segments, or template structure
-- Only fill/enhance narrative content within the provided template placeholders
+- Write natural, flowing prose - DO NOT use template placeholders like "{{idea}}" or "Study about..."
+- Write complete, well-structured paragraphs with proper medical terminology
+- Provide comprehensive, detailed content (aim for 200-500 words per section)
 - For clinical claims, cite sources or mark as '[To be confirmed by PI]'
 - Do not invent statistics, risks, or benefits
 - If uncertain, explicitly state uncertainty
@@ -343,39 +343,59 @@ CRITICAL CONSTRAINTS:
 - Never invent facts or statistics
 - Cite sources or mark uncertain
 - Conform to rulebook constraints
+- Use proper medical and research terminology appropriate for Indian healthcare context
+- Write in third person, formal academic style
+
+STYLE GUIDELINES:
+- Start with clear topic sentences
+- Use transitions between ideas
+- Include relevant context and background
+- Provide specific details where appropriate
+- Use active voice where possible
+- Maintain professional, objective tone
 
 Study details:
 - Design: {DESIGN}
 - Condition: {CONDITION}
 - Primary endpoint: {PRIMARY_ENDPOINT}
 - Population: {POPULATION}
+- Setting: {SETTING}
 
-Generate narrative content for the {SECTION} section only. Return only the content text, maintaining exact template structure.`;
+Generate comprehensive narrative content for the {SECTION} section. Write naturally as if drafting a complete protocol document, not filling in templates. Return only the content text.`;
 
 /**
  * PROMPT: Generate PIS/ICF content with fact-checking
  */
-const PROMPT_GENERATE_PIS_ICF = `You are helping draft a Participant Information Sheet (PIS) and Informed Consent Form (ICF) for a clinical study in India.
+const PROMPT_GENERATE_PIS_ICF = `You are drafting a comprehensive Participant Information Sheet (PIS) and Informed Consent Form (ICF) for a clinical study in India. Write in clear, accessible language suitable for participants with varying levels of health literacy.
 
 CRITICAL CONSTRAINTS:
-- You are filling content within an EXISTING TEMPLATE STRUCTURE
-- Do NOT modify, delete, or change: section headers, section order, required segments, or template structure
-- Only fill/enhance consent language within the provided template sections
+- Write natural, clear prose - DO NOT use template placeholders or generic phrases
+- Use simple, accessible language while maintaining medical accuracy
+- Write complete, well-structured paragraphs (aim for 150-300 words per section)
 - Base risks/benefits on condition and design only
 - Do not make up specific risk percentages unless cited
 - Mark uncertain risks as '[To be discussed with PI]'
 - Never claim approvals or fabricate IDs
 - Never invent facts or statistics
 - Cite sources or mark uncertain
-- Conform to rulebook constraints
+- Conform to ICMR guidelines and rulebook constraints
+- Use second person ("you") for participant-facing language
+- Include all mandatory ICMR elements: purpose, procedures, risks, benefits, alternatives, confidentiality, voluntary participation, contact information
+
+STYLE GUIDELINES:
+- Use short sentences (15-20 words average)
+- Avoid medical jargon; explain terms when necessary
+- Use bullet points or numbered lists for procedures and risks
+- Write in a warm, respectful tone
+- Make information actionable and clear
 
 Study details:
 - Condition: {CONDITION}
 - Design: {DESIGN}
 - Primary endpoint: {PRIMARY_ENDPOINT}
+- Population: {POPULATION}
 
-Generate study-specific consent language that is clear, compliant with ICMR guidelines, and appropriate for the Indian context. 
-Return only the filled content, maintaining exact template structure.`;
+Generate comprehensive, study-specific consent language that is clear, compliant with ICMR guidelines, and appropriate for the Indian context. Write naturally as if drafting a complete consent document, not filling in templates. Return only the content text.`;
 
 /**
  * PROMPT: Translate PIS/ICF to target language
@@ -398,17 +418,25 @@ Return the complete translated document with all sections preserved.`;
 /**
  * PROMPT: Generate IEC cover note with fact-checking
  */
-const PROMPT_GENERATE_IEC_COVER_NOTE = `You are helping draft a cover note for submission to an Institutional Ethics Committee (IEC) in India.
+const PROMPT_GENERATE_IEC_COVER_NOTE = `You are drafting a comprehensive cover note for submission to an Institutional Ethics Committee (IEC) in India. Write in formal, professional language suitable for regulatory correspondence.
 
 CRITICAL CONSTRAINTS:
-- You are filling content within an EXISTING TEMPLATE STRUCTURE
-- Do NOT modify, delete, or change: section headers, section order, required segments, or template structure
-- Only fill/enhance narrative content within the provided template placeholders
-- Cite relevant guidelines (ICMR, ICH E6(R3)) within existing sections
+- Write natural, professional prose - DO NOT use template placeholders or generic phrases
+- Write complete, well-structured paragraphs (aim for 300-600 words total)
+- Cite relevant guidelines (ICMR, ICH E6(R3)) appropriately
 - Never claim IEC approval or imply approval
 - Never fabricate IEC registration numbers
 - Never provide legal guarantees
-- Return only the filled content, maintaining exact template structure
+- Use formal letter-writing conventions
+- Demonstrate thorough understanding of ethical considerations
+
+STYLE GUIDELINES:
+- Use formal salutation and closing
+- Structure as a professional letter
+- Include clear introduction, body paragraphs, and conclusion
+- Use third person for study description
+- Maintain respectful, professional tone throughout
+- Include specific details about the study
 
 Study summary:
 - Title: {TITLE}
@@ -416,8 +444,16 @@ Study summary:
 - Condition: {CONDITION}
 - Primary endpoint: {PRIMARY_ENDPOINT}
 - Sample size: {SAMPLE_SIZE}
+- Population: {POPULATION}
 
-Generate a professional cover note that introduces the study clearly, highlights ethical considerations, explains importance, demonstrates compliance with ICMR guidelines, and requests IEC review (not approval).`;
+Generate a comprehensive, professional cover note that:
+1. Introduces the study clearly and concisely
+2. Highlights key ethical considerations and participant protections
+3. Explains the study's importance and potential benefits
+4. Demonstrates compliance with ICMR guidelines and ICH E6(R3) principles
+5. Requests IEC review (not approval) and outlines next steps
+
+Write naturally as if drafting a complete cover letter, not filling in templates. Return only the content text.`;
 
 /**
  * PROMPT: Enhance CRF layout
@@ -644,8 +680,9 @@ async function generateProtocolSection(section: string, studySpec: any, existing
     .replace("{CONDITION}", studySpec.condition || "Not specified")
     .replace("{PRIMARY_ENDPOINT}", studySpec.primaryEndpoint?.name || "Not specified")
     .replace("{POPULATION}", studySpec.populationDescription || "Not specified")
+    .replace("{SETTING}", studySpec.setting || "Not specified")
     .replace("{SECTION}", section)
-    + (existingContent ? `\n\nCurrent draft:\n${existingContent}\n\nEnhance this content:` : "\n\nGenerate new content:");
+    + (existingContent ? `\n\nCurrent draft:\n${existingContent}\n\nEnhance this content with natural prose:` : "\n\nGenerate comprehensive content:");
 
   try {
     const result = await model.generateContent(prompt);
@@ -725,7 +762,8 @@ async function generateIECCoverNote(baseline: any, existingContent?: string) {
     .replace("{CONDITION}", baseline.studySpec.condition || "Not specified")
     .replace("{PRIMARY_ENDPOINT}", baseline.studySpec.primaryEndpoint?.name || "Not specified")
     .replace("{SAMPLE_SIZE}", baseline.sampleSize?.totalSampleSize?.toString() || "Not calculated")
-    + (existingContent ? `\n\nCurrent draft:\n${existingContent}\n\nEnhance this content:` : "\n\nGenerate new content:");
+    .replace("{POPULATION}", baseline.studySpec.populationDescription || "Not specified")
+    + (existingContent ? `\n\nCurrent draft:\n${existingContent}\n\nEnhance this content with natural, professional prose:` : "\n\nGenerate comprehensive content:");
 
   try {
     const result = await model.generateContent(prompt);
@@ -903,6 +941,103 @@ export function enforceRulebookConstraints(
   return constrained;
 }
 
+/**
+ * PROMPT: Generate clarifying questions based on parsed PreSpec
+ */
+const PROMPT_GENERATE_QUESTIONS = `You are helping clarify a clinical research study idea by generating targeted questions.
+
+CRITICAL CONSTRAINTS:
+- Generate questions ONLY for missing or ambiguous information
+- Prioritize questions: critical (must answer), important (should answer), optional (nice to have)
+- Ask ONE question per information gap
+- Use clear, clinician-friendly language
+- Focus on information needed for study design selection and protocol development
+- Include language selection question: "In which languages should the Participant Information Sheet (PIS) and Informed Consent Form (ICF) be provided? (Select all that apply)"
+
+STUDY IDEA: {IDEA}
+
+PARSED INFORMATION:
+{PRESPEC}
+
+ANALYZE GAPS:
+- What critical information is missing? (condition, population, primary outcome, design type)
+- What is ambiguous or unclear? (timeframe, setting, intervention details)
+- What would help select the best study design?
+- What is needed for proper protocol development?
+
+GENERATE QUESTIONS:
+Return a JSON array of questions, each with:
+- id: unique identifier (e.g., "q1", "q2")
+- question: the question text (clear and specific)
+- priority: "critical" | "important" | "optional"
+- field: optional PreSpec field name this relates to (e.g., "condition", "primaryOutcomeHint")
+
+EXAMPLES:
+[
+  {
+    "id": "q1",
+    "question": "What is the primary health condition or disease being studied?",
+    "priority": "critical",
+    "field": "condition"
+  },
+  {
+    "id": "q2",
+    "question": "What is the primary outcome measure you want to evaluate?",
+    "priority": "critical",
+    "field": "primaryOutcomeHint"
+  },
+  {
+    "id": "q3",
+    "question": "In which languages should the Participant Information Sheet (PIS) and Informed Consent Form (ICF) be provided? (Select all that apply: Hindi, Bengali, Telugu, Marathi, Tamil, Gujarati, Kannada, Malayalam, Odia, Punjabi, Assamese, Urdu, or other)",
+    "priority": "important",
+    "field": "selectedLanguages"
+  }
+]
+
+Return ONLY the JSON array, no additional text.`;
+
+/**
+ * Generate clarifying questions based on parsed PreSpec
+ */
+async function generateClarifyingQuestions(preSpec: any, idea: string): Promise<any[]> {
+  validateAIAvailability();
+  
+  const client = configureGeminiClient();
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+  
+  const prompt = PROMPT_GENERATE_QUESTIONS
+    .replace("{IDEA}", idea)
+    .replace("{PRESPEC}", JSON.stringify(preSpec, null, 2));
+
+  try {
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    // Extract JSON from response
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      throw new Error("Failed to extract questions JSON from AI response");
+    }
+    
+    const questions = JSON.parse(jsonMatch[0]);
+    
+    // Validate questions structure
+    if (!Array.isArray(questions)) {
+      throw new Error("Questions must be an array");
+    }
+    
+    return questions.map((q: any, index: number) => ({
+      id: q.id || `q${index + 1}`,
+      question: q.question || "",
+      priority: q.priority || "optional",
+      field: q.field || undefined,
+    }));
+  } catch (error) {
+    throw new Error(`AI question generation failed: ${error}. Please check your API key and internet connection.`);
+  }
+}
+
 module.exports = {
   validateAIAvailability,
   isAIAvailable,
@@ -915,4 +1050,5 @@ module.exports = {
   generateIECCoverNote,
   enhanceCRFLayout,
   generateRecentReferences,
+  generateClarifyingQuestions,
 };
