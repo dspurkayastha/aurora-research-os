@@ -1000,41 +1000,143 @@ Return ONLY the JSON array, no additional text.`;
  * Generate clarifying questions based on parsed PreSpec
  */
 async function generateClarifyingQuestions(preSpec: any, idea: string): Promise<any[]> {
-  validateAIAvailability();
+  // Validate inputs
+  if (!preSpec || typeof preSpec !== "object") {
+    throw new Error("preSpec must be a valid object");
+  }
   
-  const client = configureGeminiClient();
-  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
-  
-  const prompt = PROMPT_GENERATE_QUESTIONS
-    .replace("{IDEA}", idea)
-    .replace("{PRESPEC}", JSON.stringify(preSpec, null, 2));
+  if (!idea || typeof idea !== "string" || idea.trim().length === 0) {
+    throw new Error("idea must be a non-empty string");
+  }
 
   try {
+    validateAIAvailability();
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`AI service validation failed: ${errorMsg}`);
+  }
+  
+  let client;
+  try {
+    client = configureGeminiClient();
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to configure Gemini client: ${errorMsg}. Please check your GEMINI_API_KEY.`);
+  }
+  
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+  
+  // Build prompt with error handling for JSON stringify
+  let prompt: string;
+  try {
+    prompt = PROMPT_GENERATE_QUESTIONS
+      .replace("{IDEA}", idea)
+      .replace("{PRESPEC}", JSON.stringify(preSpec, null, 2));
+  } catch (error) {
+    throw new Error(`Failed to build prompt: ${error}. Invalid preSpec structure.`);
+  }
+
+  try {
+    console.log("[generateClarifyingQuestions] Calling Gemini API...");
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
     
-    // Extract JSON from response
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      throw new Error("Failed to extract questions JSON from AI response");
+    if (!text || text.trim().length === 0) {
+      console.warn("[generateClarifyingQuestions] Empty response from Gemini API");
+      return []; // Return empty array instead of throwing
     }
     
-    const questions = JSON.parse(jsonMatch[0]);
+    // Extract JSON from response - try multiple patterns
+    let jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      // Try to find JSON object instead
+      jsonMatch = text.match(/\{[\s\S]*"questions"[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.questions && Array.isArray(parsed.questions)) {
+            return parsed.questions.map((q: any, index: number) => ({
+              id: q.id || `q${index + 1}`,
+              question: q.question || "",
+              priority: q.priority || "optional",
+              field: q.field || undefined,
+            }));
+          }
+        } catch (e) {
+          // Fall through to try other patterns
+        }
+      }
+      
+      // If no JSON found, log warning and return empty array
+      console.warn("[generateClarifyingQuestions] Could not extract JSON from response:", text.substring(0, 200));
+      return []; // Return empty array instead of throwing
+    }
+    
+    let questions: any[];
+    try {
+      questions = JSON.parse(jsonMatch[0]);
+    } catch (parseError) {
+      console.error("[generateClarifyingQuestions] JSON parse error:", parseError);
+      console.error("[generateClarifyingQuestions] JSON string:", jsonMatch[0].substring(0, 500));
+      throw new Error(`Failed to parse JSON response: ${parseError}. Response may be malformed.`);
+    }
     
     // Validate questions structure
     if (!Array.isArray(questions)) {
-      throw new Error("Questions must be an array");
+      console.warn("[generateClarifyingQuestions] Questions is not an array:", typeof questions);
+      return []; // Return empty array instead of throwing
     }
     
-    return questions.map((q: any, index: number) => ({
-      id: q.id || `q${index + 1}`,
-      question: q.question || "",
-      priority: q.priority || "optional",
-      field: q.field || undefined,
-    }));
+    if (questions.length === 0) {
+      console.log("[generateClarifyingQuestions] No questions generated - study idea may be complete");
+      return [];
+    }
+    
+    // Map and validate each question
+    const validatedQuestions = questions.map((q: any, index: number) => {
+      if (!q || typeof q !== "object") {
+        console.warn(`[generateClarifyingQuestions] Invalid question at index ${index}:`, q);
+        return null;
+      }
+      
+      return {
+        id: q.id || `q${index + 1}`,
+        question: q.question || "",
+        priority: (q.priority === "critical" || q.priority === "important" || q.priority === "optional") 
+          ? q.priority 
+          : "optional",
+        field: q.field || undefined,
+      };
+    }).filter((q: any) => q !== null); // Remove null entries
+    
+    console.log(`[generateClarifyingQuestions] Successfully generated ${validatedQuestions.length} questions`);
+    return validatedQuestions;
+    
   } catch (error) {
-    throw new Error(`AI question generation failed: ${error}. Please check your API key and internet connection.`);
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    
+    // Check for specific Gemini API errors
+    if (errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("API key")) {
+      throw new Error(`Invalid Gemini API key. Please check your GEMINI_API_KEY environment variable.`);
+    }
+    
+    if (errorMsg.includes("QUOTA_EXCEEDED") || errorMsg.includes("quota")) {
+      throw new Error(`Gemini API quota exceeded. Please check your API usage limits.`);
+    }
+    
+    if (errorMsg.includes("SAFETY") || errorMsg.includes("safety")) {
+      throw new Error(`Content was blocked by Gemini safety filters. Please modify your study idea.`);
+    }
+    
+    // Generic error
+    console.error(`[generateClarifyingQuestions] Error: ${errorName} - ${errorMsg}`);
+    if (error instanceof Error && error.stack) {
+      console.error(`[generateClarifyingQuestions] Stack:`, error.stack);
+    }
+    
+    throw new Error(`AI question generation failed: ${errorMsg}. Please check your API key and internet connection.`);
   }
 }
 

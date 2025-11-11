@@ -18,6 +18,7 @@ export default function IdeaPage() {
     setStorySpec,
     setClarifyingQuestions,
     clarifyingQuestions,
+    currentPreSpec,
     setCurrentPreSpec,
     setDesignConfidence,
     setDesignReasoning,
@@ -100,8 +101,6 @@ export default function IdeaPage() {
   };
 
   const handleSubmitAnswers = async () => {
-    const studyContext = useStudy();
-    const currentPreSpec = studyContext.currentPreSpec;
     if (!currentPreSpec) return;
 
     const updatedPreSpec = { ...currentPreSpec };

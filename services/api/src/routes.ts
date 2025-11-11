@@ -160,18 +160,60 @@ router.post("/llm/select-design", async (req: any, res: any) => {
 router.post("/llm/generate-questions", async (req: any, res: any) => {
   const { preSpec, idea } = req.body ?? {};
   
-  if (!preSpec || typeof idea !== "string") {
-    return res.status(400).json({ error: "preSpec and idea are required" });
+  // Enhanced request validation
+  if (!preSpec) {
+    console.error("[generate-questions] Missing preSpec in request body");
+    return res.status(400).json({ 
+      error: "preSpec is required",
+      details: "preSpec must be a valid parsed study specification object"
+    });
+  }
+  
+  if (typeof idea !== "string" || idea.trim().length === 0) {
+    console.error("[generate-questions] Invalid or missing idea in request body");
+    return res.status(400).json({ 
+      error: "idea is required",
+      details: "idea must be a non-empty string"
+    });
   }
 
   try {
+    console.log("[generate-questions] Validating AI availability...");
     validateAIAvailability();
+    
+    console.log("[generate-questions] Generating clarifying questions...", {
+      ideaLength: idea.length,
+      preSpecKeys: Object.keys(preSpec || {})
+    });
+    
     const questions = await generateClarifyingQuestions(preSpec, idea);
+    
+    console.log("[generate-questions] Successfully generated questions", {
+      questionCount: questions.length
+    });
+    
     res.json({ questions });
   } catch (error) {
-    res.status(503).json({ 
-      error: "AI service unavailable", 
-      details: error instanceof Error ? error.message : String(error) 
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
+    console.error("[generate-questions] Error generating questions:", {
+      error: errorMessage,
+      stack: errorStack,
+      preSpecPresent: !!preSpec,
+      ideaLength: idea?.length || 0
+    });
+    
+    // Return 503 for AI service issues, 500 for other errors
+    const statusCode = errorMessage.includes("AI service") || 
+                      errorMessage.includes("API key") || 
+                      errorMessage.includes("GEMINI") 
+                      ? 503 
+                      : 500;
+    
+    res.status(statusCode).json({ 
+      error: statusCode === 503 ? "AI service unavailable" : "Failed to generate questions",
+      details: errorMessage
     });
   }
 });

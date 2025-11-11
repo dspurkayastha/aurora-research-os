@@ -6,11 +6,11 @@ import { useStudy } from "../context";
 import { Card } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
-import { buildBaselinePackageFromIdea } from "@aurora/core";
+import { buildBaselinePackageFromIdea, type SampleSizeAssumptionsBase } from "@aurora/core";
 
 export default function SampleSizePage() {
   const router = useRouter();
-  const { idea, storySpec, assumptions, setAssumptions, setBaselineResult } = useStudy();
+  const { idea, storySpec, assumptions, setAssumptions, baselineResult, setBaselineResult } = useStudy();
   const [localAssumptions, setLocalAssumptions] = useState(assumptions);
   const [computing, setComputing] = useState(false);
 
@@ -86,7 +86,7 @@ export default function SampleSizePage() {
         <Button variant="outline" onClick={() => router.push("/new-study/design")}>
           ← Back
         </Button>
-        <Button onClick={() => router.push("/new-study/documents")} disabled={!baselineResult}>
+        <Button onClick={() => router.push("/new-study/documents")} disabled={!baselineResult || computing}>
           Continue to Documents →
         </Button>
       </div>
