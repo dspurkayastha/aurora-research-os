@@ -210,10 +210,86 @@ export default function IdeaPage() {
             </div>
 
             <div className="space-y-5">
-            {clarifyingQuestions.map((q) => {
-              const isCritical = q.priority === "critical";
-              const isAnswered = q.answer && q.answer.trim().length > 0;
-              const isSkipped = q.skipped;
+            {(() => {
+              // Separate primary endpoint questions from others
+              const endpointQuestions = clarifyingQuestions.filter((q) => q.field === "primaryOutcomeHint" || q.field === "timeframe");
+              const otherQuestions = clarifyingQuestions.filter((q) => q.field !== "primaryOutcomeHint" && q.field !== "timeframe");
+              
+              return (
+                <>
+                  {endpointQuestions.length > 0 && (
+                    <div className="mb-6 p-5 rounded-xl border-2 border-red-400/60 bg-gradient-to-br from-red-50/90 to-orange-50/90 shadow-[0_4px_12px_0_rgba(239,68,68,0.15)]">
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className="text-lg">🎯</span>
+                        <h3 className="text-lg font-bold text-red-900">Primary Endpoint Formulation</h3>
+                      </div>
+                      <p className="text-sm text-red-800 mb-4 leading-relaxed">
+                        The primary endpoint is the most important outcome your study will measure. Please provide specific details to help us formulate it correctly.
+                      </p>
+                      <div className="mb-4 p-3 rounded-lg bg-white/80 border border-red-200/60">
+                        <p className="text-xs font-semibold text-red-900 mb-2">Examples of well-formulated primary endpoints:</p>
+                        <ul className="text-xs text-red-800 space-y-1 list-disc list-inside">
+                          <li>Binary: "30-day mortality", "Incidence of diabetes", "Response rate"</li>
+                          <li>Continuous: "Change in systolic blood pressure (mmHg)", "HbA1c levels (%)", "Length of hospital stay (days)"</li>
+                          <li>Time-to-event: "Time to disease progression", "Overall survival", "Time to first cardiovascular event"</li>
+                        </ul>
+                      </div>
+                      <div className="space-y-4">
+                        {endpointQuestions.map((q) => {
+                          const isCritical = q.priority === "critical";
+                          const isAnswered = q.answer && q.answer.trim().length > 0;
+                          const isSkipped = q.skipped;
+
+                          return (
+                            <div
+                              key={q.id}
+                              className={clsx(
+                                "rounded-xl border-2 p-5 transition-all duration-300 bg-white/90",
+                                isCritical
+                                  ? "border-red-500/60 shadow-[0_2px_8px_0_rgba(239,68,68,0.2)]"
+                                  : "border-red-300/60 shadow-[0_2px_8px_0_rgba(239,68,68,0.1)]"
+                              )}
+                            >
+                              <div className="flex items-center gap-2.5 mb-3">
+                                <span
+                                  className={clsx(
+                                    "text-xs font-bold px-3 py-1 rounded-lg uppercase tracking-wide",
+                                    isCritical
+                                      ? "bg-red-600 text-white shadow-md"
+                                      : "bg-red-400 text-white shadow-sm"
+                                  )}
+                                >
+                                  {isCritical ? "Required" : "Recommended"}
+                                </span>
+                                {isCritical && <span className="text-sm text-red-600 font-bold">*</span>}
+                              </div>
+                              <p className="text-base font-semibold text-neutral-900 mb-4 leading-relaxed">{q.question}</p>
+                              <Textarea
+                                value={q.answer || ""}
+                                onChange={(e) => handleAnswerQuestion(q.id, e.target.value)}
+                                rows={3}
+                                placeholder={isCritical ? "This field is required..." : "Your answer (optional)..."}
+                              />
+                              {!isCritical && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSkipQuestion(q.id)}
+                                  className="mt-3 text-xs font-medium text-neutral-500 hover:text-neutral-700 underline transition-colors"
+                                >
+                                  Skip this question
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {otherQuestions.map((q) => {
+                    const isCritical = q.priority === "critical";
+                    const isAnswered = q.answer && q.answer.trim().length > 0;
+                    const isSkipped = q.skipped;
 
               return (
                 <div
@@ -309,7 +385,10 @@ export default function IdeaPage() {
                 </div>
               );
             })}
-          </div>
+                </>
+              );
+            })()}
+            </div>
 
             <div className="flex items-center gap-4 justify-end pt-4 border-t border-neutral-200/60">
               <Button variant="outline" onClick={() => setShowQuestions(false)} size="md">

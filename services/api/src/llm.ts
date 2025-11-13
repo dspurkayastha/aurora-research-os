@@ -965,6 +965,14 @@ ANALYZE GAPS:
 - What would help select the best study design?
 - What is needed for proper protocol development?
 
+PRIMARY ENDPOINT DETECTION:
+- Check if primaryOutcomeHint is missing, null, empty, or too vague (e.g., "outcome", "result", "effect")
+- If primary endpoint is missing or ambiguous, generate SPECIFIC questions to help formulate it:
+  1. "What is the main outcome you want to measure? Please be specific (e.g., '30-day mortality', 'change in systolic blood pressure', 'incidence of diabetes')"
+  2. "What type of outcome is this? (binary/yes-no outcome like mortality or disease occurrence, continuous/number outcome like blood pressure or lab values, or time-to-event outcome like survival time)"
+  3. "When will this outcome be measured? (e.g., 'at 12 weeks', 'within 30 days', 'at 6 months')"
+- These questions should have priority: "critical" and field: "primaryOutcomeHint"
+
 GENERATE QUESTIONS:
 Return a JSON array of questions, each with:
 - id: unique identifier (e.g., "q1", "q2")
@@ -982,12 +990,24 @@ EXAMPLES:
   },
   {
     "id": "q2",
-    "question": "What is the primary outcome measure you want to evaluate?",
+    "question": "What is the main outcome you want to measure? Please be specific (e.g., '30-day mortality', 'change in systolic blood pressure', 'incidence of diabetes')",
     "priority": "critical",
     "field": "primaryOutcomeHint"
   },
   {
     "id": "q3",
+    "question": "What type of outcome is this? (binary/yes-no outcome like mortality or disease occurrence, continuous/number outcome like blood pressure or lab values, or time-to-event outcome like survival time)",
+    "priority": "critical",
+    "field": "primaryOutcomeHint"
+  },
+  {
+    "id": "q4",
+    "question": "When will this outcome be measured? (e.g., 'at 12 weeks', 'within 30 days', 'at 6 months')",
+    "priority": "critical",
+    "field": "timeframe"
+  },
+  {
+    "id": "q5",
     "question": "In which languages should the Participant Information Sheet (PIS) and Informed Consent Form (ICF) be provided? (Select all that apply: Hindi, Bengali, Telugu, Marathi, Tamil, Gujarati, Kannada, Malayalam, Odia, Punjabi, Assamese, Urdu, or other)",
     "priority": "important",
     "field": "selectedLanguages"
@@ -1025,6 +1045,37 @@ async function generateClarifyingQuestions(preSpec: any, idea: string): Promise<
   }
   
   const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
+  
+  // Detect missing or ambiguous primary endpoint
+  const primaryOutcomeHint = preSpec.primaryOutcomeHint;
+  const isPrimaryEndpointMissing = !primaryOutcomeHint || 
+    primaryOutcomeHint.trim().length === 0 ||
+    primaryOutcomeHint.toLowerCase().match(/^(outcome|result|effect|measure|endpoint)$/);
+  
+  // If primary endpoint is missing, inject specific questions before AI generation
+  const endpointQuestions: any[] = [];
+  if (isPrimaryEndpointMissing) {
+    endpointQuestions.push(
+      {
+        id: "q_primary_outcome_name",
+        question: "What is the main outcome you want to measure? Please be specific (e.g., '30-day mortality', 'change in systolic blood pressure', 'incidence of diabetes')",
+        priority: "critical",
+        field: "primaryOutcomeHint"
+      },
+      {
+        id: "q_primary_outcome_type",
+        question: "What type of outcome is this? (binary/yes-no outcome like mortality or disease occurrence, continuous/number outcome like blood pressure or lab values, or time-to-event outcome like survival time)",
+        priority: "critical",
+        field: "primaryOutcomeHint"
+      },
+      {
+        id: "q_primary_outcome_timeframe",
+        question: "When will this outcome be measured? (e.g., 'at 12 weeks', 'within 30 days', 'at 6 months')",
+        priority: "critical",
+        field: "timeframe"
+      }
+    );
+  }
   
   // Build prompt with error handling for JSON stringify
   let prompt: string;
@@ -1110,8 +1161,21 @@ async function generateClarifyingQuestions(preSpec: any, idea: string): Promise<
       };
     }).filter((q: any) => q !== null); // Remove null entries
     
-    console.log(`[generateClarifyingQuestions] Successfully generated ${validatedQuestions.length} questions`);
-    return validatedQuestions;
+    // Merge endpoint questions with AI-generated questions, prioritizing endpoint questions
+    // Remove duplicate questions from AI that match endpoint questions
+    const aiQuestionsFiltered = validatedQuestions.filter((q: any) => {
+      if (endpointQuestions.length === 0) return true;
+      // Don't include AI questions that are similar to endpoint questions
+      const isDuplicate = endpointQuestions.some((eq: any) => 
+        eq.field === q.field && eq.priority === q.priority
+      );
+      return !isDuplicate;
+    });
+    
+    const allQuestions = [...endpointQuestions, ...aiQuestionsFiltered];
+    
+    console.log(`[generateClarifyingQuestions] Successfully generated ${allQuestions.length} questions (${endpointQuestions.length} endpoint-specific, ${aiQuestionsFiltered.length} AI-generated)`);
+    return allQuestions;
     
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

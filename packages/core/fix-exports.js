@@ -15,6 +15,11 @@ function fixExports(filePath) {
   // Fix baseline exports
   fixed = fixed.replace(/export \* from ['"]\.\/baseline['"];?/gm, 'export { buildBaselinePackageFromIdea, canLockAndLaunch, getResearchSourcesForAssumptions } from "./baseline";');
   
+  // Fix pis_icf exports - ensure buildPisIcfDraftForLanguage is explicitly exported
+  if (fixed.includes('export * from "./pis_icf"') && !fixed.includes('export { buildPisIcfDraftForLanguage }')) {
+    fixed = fixed.replace(/export \* from ['"]\.\/pis_icf['"];?/gm, 'export * from "./pis_icf";\nexport { buildPisIcfDraftForLanguage } from "./pis_icf";');
+  }
+  
   if (fixed !== content) {
     fs.writeFileSync(filePath, fixed);
     return true;
