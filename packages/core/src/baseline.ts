@@ -243,14 +243,13 @@ function crossLinkIssues(baseline: BaselinePackage, sapExplanation: StatsExplana
   return issues;
 }
 
-export function buildBaselinePackageFromIdea(
-  rawIdea: string,
+/**
+ * Build baseline package from an existing StudySpec (preserves clarifying question answers)
+ */
+export function buildBaselinePackageFromSpec(
+  studySpec: StudySpec,
   assumptions?: Partial<SampleSizeAssumptionsBase>
 ): BaselineBuildResult {
-  const preSpec: PreSpec = parseIdeaToPreSpec(rawIdea);
-  const designId = chooseDesign(preSpec);
-  const studySpec: StudySpec = buildBaselineSpec(preSpec, designId ?? null);
-
   const mergedAssumptions = mergeAssumptions(studySpec, assumptions);
   const sampleSize: SampleSizeResult =
     studySpec.designId && studySpec.primaryEndpoint
@@ -310,6 +309,17 @@ export function buildBaselinePackageFromIdea(
     ...baseline,
     issues,
   };
+}
+
+export function buildBaselinePackageFromIdea(
+  rawIdea: string,
+  assumptions?: Partial<SampleSizeAssumptionsBase>
+): BaselineBuildResult {
+  const preSpec: PreSpec = parseIdeaToPreSpec(rawIdea);
+  const designId = chooseDesign(preSpec);
+  const studySpec: StudySpec = buildBaselineSpec(preSpec, designId ?? null);
+
+  return buildBaselinePackageFromSpec(studySpec, assumptions);
 }
 
 export function canLockAndLaunch(

@@ -7,7 +7,7 @@ import { Card } from "../../../components/ui/card";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { SampleSizePanel } from "../components";
-import { buildBaselinePackageFromIdea, type SampleSizeAssumptionsBase } from "@aurora/core";
+import { buildBaselinePackageFromSpec, type SampleSizeAssumptionsBase } from "@aurora/core";
 
 export default function SampleSizePage() {
   const router = useRouter();
@@ -32,9 +32,15 @@ export default function SampleSizePage() {
   }, [baselineResult]);
 
   const handleCompute = () => {
+    if (!storySpec) {
+      console.error("Study spec is required for sample size calculation");
+      return;
+    }
+    
     setComputing(true);
     try {
-      const result = buildBaselinePackageFromIdea(idea, localAssumptions as Partial<SampleSizeAssumptionsBase>);
+      // Use buildBaselinePackageFromSpec to preserve clarifying question answers
+      const result = buildBaselinePackageFromSpec(storySpec, localAssumptions as Partial<SampleSizeAssumptionsBase>);
       setAssumptions(localAssumptions);
       setBaselineResult(result);
     } catch (error) {

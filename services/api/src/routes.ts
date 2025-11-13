@@ -1,5 +1,5 @@
 const { Router } = require("express");
-const { AURORA_RULEBOOK, buildBaselinePackageFromIdea, buildBaselineSpec } = require("@aurora/core");
+const { AURORA_RULEBOOK, buildBaselinePackageFromIdea, buildBaselinePackageFromSpec, buildBaselineSpec } = require("@aurora/core");
 // @ts-ignore - LLM module uses CommonJS exports
 const {
   generateProtocolSection,
@@ -60,14 +60,18 @@ router.get("/rulebook/summary", (_req: any, res: any) => {
 });
 
 router.post("/preview/baseline", async (req: any, res: any) => {
-  const { idea, assumptions, useAIEnhancement } = req.body ?? {};
+  const { idea, studySpec, assumptions, useAIEnhancement } = req.body ?? {};
 
-  if (typeof idea !== "string" || idea.trim().length === 0) {
-    return res.status(400).json({ error: "idea is required" });
+  // Require either idea or studySpec
+  if ((!idea || typeof idea !== "string" || idea.trim().length === 0) && !studySpec) {
+    return res.status(400).json({ error: "idea or studySpec is required" });
   }
 
   try {
-    const baseline = buildBaselinePackageFromIdea(idea, assumptions);
+    // Use StudySpec if provided (preserves clarifying question answers), otherwise rebuild from idea
+    const baseline = studySpec 
+      ? buildBaselinePackageFromSpec(studySpec, assumptions)
+      : buildBaselinePackageFromIdea(idea, assumptions);
     
     // Optionally enhance with AI if requested and available
     if (useAIEnhancement && isAIAvailable()) {

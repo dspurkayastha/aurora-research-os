@@ -44,6 +44,7 @@ export default function ReviewPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           idea,
+          studySpec: baselineResult.studySpec, // Send StudySpec to preserve clarifying question answers
           assumptions,
           acknowledgeCritical,
           useAIEnhancement: useAIEnhancement ?? true,

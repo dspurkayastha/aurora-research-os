@@ -388,20 +388,60 @@ export function buildBaselineSpec(preSpec: PreSpec, designId: StudyDesignId | nu
   // Priority 1: Check clarifying questions
   const endpointFromQuestions = extractFromClarifyingQuestions(preSpec, "primaryOutcomeHint");
   if (endpointFromQuestions) {
-    // Try to infer endpoint type from the answer
-    const hintLower = endpointFromQuestions.toLowerCase();
+    // Get all answers for primaryOutcomeHint field (may include both name and type questions)
+    const allEndpointQuestionAnswers = preSpec.clarifyingQuestions
+      ?.filter((q) => q.field === "primaryOutcomeHint" && q.answer && !q.skipped)
+      .map((q) => q.answer!) || [];
+    
+    // Get endpoint name - use the answer that looks like an endpoint name (not a type description)
+    let endpointName = endpointFromQuestions; // Default to first answer
+    
+    // Find the answer that looks like an endpoint name (doesn't contain type keywords)
+    const typeKeywords = ["binary", "continuous", "time-to-event", "yes-no", "number", "survival"];
+    const nameAnswer = allEndpointQuestionAnswers.find((ans) => {
+      const ansLower = ans.toLowerCase();
+      return !typeKeywords.some((keyword) => ansLower.includes(keyword));
+    });
+    if (nameAnswer) {
+      endpointName = nameAnswer; // Preserve original case
+    }
+    
+    // Determine type from all answers
+    const allAnswersText = allEndpointQuestionAnswers.join(" ").toLowerCase();
+    const endpointNameLower = endpointName.toLowerCase();
     let type: EndpointSpec["type"] = "binary";
-    if (hintLower.includes("length of stay") || hintLower.includes("los")) {
+    
+    // Check for explicit type mentions in any of the answers
+    if (allAnswersText.includes("binary") || allAnswersText.includes("yes-no") || allAnswersText.includes("yes/no") || 
+        endpointNameLower.includes("mortality") || endpointNameLower.includes("death") || 
+        endpointNameLower.includes("incidence") || endpointNameLower.includes("prevalence") || 
+        endpointNameLower.includes("rate") || endpointNameLower.includes("occurrence")) {
+      type = "binary";
+    } else if (allAnswersText.includes("continuous") || allAnswersText.includes("number") || 
+               endpointNameLower.includes("change") || endpointNameLower.includes("improvement") ||
+               endpointNameLower.includes("length of stay") || endpointNameLower.includes("los") ||
+               endpointNameLower.includes("blood pressure") || endpointNameLower.includes("lab value")) {
       type = "continuous";
-    } else if (hintLower.includes("time to") || hintLower.includes("survival") || hintLower.includes("duration")) {
+    } else if (allAnswersText.includes("time-to-event") || endpointNameLower.includes("time to") || 
+               endpointNameLower.includes("survival") || endpointNameLower.includes("duration") ||
+               endpointNameLower.includes("progression") || endpointNameLower.includes("event")) {
       type = "time-to-event";
     }
     
     primaryEndpoint = {
-      name: endpointFromQuestions,
+      name: endpointName,
       type,
       role: "primary",
     };
+    
+    // Set timeframe from clarifying questions if available
+    const timeframeFromQuestions = extractFromClarifyingQuestions(preSpec, "timeframe") ||
+                                   extractFromClarifyingQuestions(preSpec, "followUpDuration");
+    if (timeframeFromQuestions) {
+      primaryEndpoint.timeframe = timeframeFromQuestions;
+    } else if (preSpec.timeframeHint) {
+      primaryEndpoint.timeframe = preSpec.timeframeHint;
+    }
   }
   
   // Priority 2: Use AI-parsed PreSpec (resolvePrimaryEndpoint)

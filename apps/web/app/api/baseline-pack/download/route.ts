@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import {
   buildBaselinePackageFromIdea,
+  buildBaselinePackageFromSpec,
   type SampleSizeAssumptionsBase,
+  type StudySpec,
 } from "@aurora/core";
 
 import {
@@ -12,6 +14,7 @@ import {
 
 type DownloadRequest = {
   idea: string;
+  studySpec?: StudySpec; // Optional: if provided, use this instead of rebuilding from idea
   assumptions?: Partial<SampleSizeAssumptionsBase>;
   acknowledgeCritical?: boolean;
   useAIEnhancement?: boolean;
@@ -98,11 +101,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const idea = typeof payload.idea === "string" ? payload.idea.trim() : "";
-  if (!idea) {
+  if (!idea && !payload.studySpec) {
     return NextResponse.json({ error: "idea-required" }, { status: 400 });
   }
 
   const assumptions = sanitizeAssumptions(payload.assumptions);
+  const studySpec = payload.studySpec; // Use provided StudySpec if available (preserves clarifying questions)
 
   try {
     // If AI enhancement is requested, get enhanced baseline from API service
@@ -114,7 +118,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            idea,
+            idea: studySpec ? undefined : idea, // Don't send idea if we have studySpec
+            studySpec, // Send studySpec if available
             assumptions,
             useAIEnhancement: true,
           }),
@@ -125,15 +130,28 @@ export async function POST(request: Request): Promise<NextResponse> {
         } else {
           // Fallback to deterministic if API fails
           console.warn("AI enhancement failed, using deterministic baseline");
-          baseline = buildBaselinePackageFromIdea(idea, assumptions);
+          if (studySpec) {
+            baseline = buildBaselinePackageFromSpec(studySpec, assumptions);
+          } else {
+            baseline = buildBaselinePackageFromIdea(idea, assumptions);
+          }
         }
       } catch (apiError) {
         // Fallback to deterministic if API is unavailable
         console.warn("AI enhancement unavailable, using deterministic baseline:", apiError);
-        baseline = buildBaselinePackageFromIdea(idea, assumptions);
+        if (studySpec) {
+          baseline = buildBaselinePackageFromSpec(studySpec, assumptions);
+        } else {
+          baseline = buildBaselinePackageFromIdea(idea, assumptions);
+        }
       }
     } else {
-      baseline = buildBaselinePackageFromIdea(idea, assumptions);
+      // Use StudySpec if available (preserves clarifying question answers), otherwise rebuild from idea
+      if (studySpec) {
+        baseline = buildBaselinePackageFromSpec(studySpec, assumptions);
+      } else {
+        baseline = buildBaselinePackageFromIdea(idea, assumptions);
+      }
     }
     
     const blockingIssues = getBlockingIssues(baseline);

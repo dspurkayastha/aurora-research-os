@@ -32,6 +32,6 @@ export * from "./regulatory";
 export * from "./literature";
 export * from "./iec";
 // Re-export baseline functions
-export { buildBaselinePackageFromIdea, canLockAndLaunch, getResearchSourcesForAssumptions } from "./baseline";
+export { buildBaselinePackageFromIdea, buildBaselinePackageFromSpec, canLockAndLaunch, getResearchSourcesForAssumptions } from "./baseline";
 export * from "./research-defaults";
 export * from "./document-formatting";
