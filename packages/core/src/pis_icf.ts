@@ -133,8 +133,71 @@ export function buildPisIcfDraft(studySpec: StudySpec): PISICFDraft {
     warnings.push("Design classification is not final. Verify procedures, risks, and alternatives with the PI.");
   }
 
+  // Check for language selection - if non-English languages are selected, add a note
+  const selectedLanguages = studySpec.selectedLanguages || [];
+  const nonEnglishLanguages = selectedLanguages.filter((lang) => 
+    lang.toLowerCase() !== "english" && lang.toLowerCase() !== "en"
+  );
+  
+  if (nonEnglishLanguages.length > 0) {
+    warnings.push(
+      `PIS/ICF requested in additional languages: ${nonEnglishLanguages.join(", ")}. ` +
+      `These must be prepared using IEC-approved translations; not auto-generated. ` +
+      `English version provided as base document.`
+    );
+  }
+
   return {
     sections: buildSections(studySpec),
     warnings,
+  };
+}
+
+/**
+ * Build PIS/ICF draft for a specific language
+ * For non-English languages, returns a stub indicating translation is required
+ */
+export function buildPisIcfDraftForLanguage(
+  studySpec: StudySpec,
+  language: string
+): PISICFDraft {
+  const isEnglish = language.toLowerCase() === "english" || language.toLowerCase() === "en";
+  
+  if (isEnglish) {
+    return buildPisIcfDraft(studySpec);
+  }
+  
+  // For non-English languages, return a stub
+  const condition = studySpec.condition ?? "the health condition under study";
+  const population = studySpec.populationDescription ?? "eligible participants";
+  const primaryEndpoint = studySpec.primaryEndpoint?.name ?? "the main outcome";
+  
+  return {
+    sections: [
+      {
+        id: "translation-notice",
+        title: "Translation Notice",
+        required: true,
+        content: line(
+          `This ${language} version of the Participant Information Sheet (PIS) and Informed Consent Form (ICF) ` +
+          `must be prepared using an IEC-approved translation of the English version. ` +
+          `This is a placeholder document indicating that translation is required. ` +
+          `The English version should be translated by a qualified translator and reviewed by the IEC before use.`
+        ),
+      },
+      {
+        id: "study-summary",
+        title: "Study Summary",
+        required: true,
+        content: line(
+          `Study: ${studySpec.title || "Clinical Research Study"}. ` +
+          `This study seeks to understand ${primaryEndpoint} in ${population} affected by ${condition}. ` +
+          `Please refer to the English PIS/ICF for complete details.`
+        ),
+      },
+    ],
+    warnings: [
+      `${language} PIS/ICF translation required. This document is a placeholder and must be replaced with an IEC-approved translation.`,
+    ],
   };
 }

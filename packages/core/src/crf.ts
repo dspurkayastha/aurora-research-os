@@ -244,6 +244,16 @@ function buildBaselineForm(spec: StudySpec): CRFForm {
 
 function buildTreatmentOrExposureForm(spec: StudySpec): CRFForm | null {
   if (INTERVENTIONAL_DESIGNS.has(spec.designId ?? "")) {
+    // For RCTs, use groupLabels if available, otherwise use intervention/comparator names
+    let armOptions: string[] = [];
+    if (spec.groupLabels && spec.groupLabels.length > 0) {
+      armOptions = spec.groupLabels;
+    } else if (spec.interventionName && spec.comparatorName) {
+      armOptions = [spec.interventionName, spec.comparatorName];
+    } else {
+      armOptions = ["Intervention", "Control"]; // Generic fallback
+    }
+    
     const fields: CRFField[] = [
       {
         id: "allocation-date",
@@ -255,7 +265,8 @@ function buildTreatmentOrExposureForm(spec: StudySpec): CRFForm | null {
       {
         id: "assigned-arm",
         label: "Assigned intervention arm",
-        type: "text",
+        type: spec.groupLabels && spec.groupLabels.length > 0 ? "select" : "text",
+        options: armOptions.length > 0 ? armOptions : undefined,
         required: true,
         isCore: true,
         notes: "Record arm label; do not capture randomisation sequence numbers.",
@@ -272,12 +283,20 @@ function buildTreatmentOrExposureForm(spec: StudySpec): CRFForm | null {
   }
 
   if (OBSERVATIONAL_EXPOSURE_DESIGNS.has(spec.designId ?? "")) {
+    // For observational designs, use groupLabels if available
+    let exposureOptions: string[] = ["Exposed", "Unexposed"];
+    if (spec.groupLabels && spec.groupLabels.length > 0) {
+      exposureOptions = spec.groupLabels;
+    } else {
+      exposureOptions = ["Exposed", "Unexposed", "Multiple levels"];
+    }
+    
     const fields: CRFField[] = [
       {
         id: "exposure-status",
         label: "Exposure classification",
         type: "select",
-        options: ["Exposed", "Unexposed", "Multiple levels"],
+        options: exposureOptions,
         required: true,
         isCore: true,
       },
@@ -309,16 +328,20 @@ function buildVisitForms(spec: StudySpec): CRFForm[] {
     return [];
   }
 
+  // Use followUpDuration if available, otherwise fall back to primaryEndpoint.timeframe
+  const timeframe = spec.followUpDuration || spec.primaryEndpoint?.timeframe;
+  const timeframeSuffix = timeframe ? ` (within ${timeframe})` : "";
+
   const visitForms: CRFForm[] = [];
   const visitCount = INTERVENTIONAL_DESIGNS.has(spec.designId ?? "") ? 2 : 1;
   for (let visitIndex = 0; visitIndex < visitCount; visitIndex += 1) {
     visitForms.push(
       createForm(
         `follow-up-${visitIndex + 1}`,
-        `Follow-up Visit ${visitIndex + 1}`,
+        `Follow-up Visit ${visitIndex + 1}${timeframeSuffix}`,
         "followup",
         outcomeFields.map((field) => ({ ...field, id: `${field.id}-v${visitIndex + 1}` })),
-        `Visit ${visitIndex + 1}`
+        `Visit ${visitIndex + 1}${timeframeSuffix}`
       )
     );
   }
@@ -326,10 +349,10 @@ function buildVisitForms(spec: StudySpec): CRFForm[] {
   visitForms.push(
     createForm(
       "primary-outcome",
-      "Primary Outcome Confirmation",
+      `Primary Outcome Confirmation${timeframeSuffix}`,
       "outcome",
       outcomeFields.map((field) => ({ ...field, id: `${field.id}-final` })),
-      "End of follow-up"
+      timeframe ? `End of follow-up (${timeframe})` : "End of follow-up"
     )
   );
 
@@ -440,9 +463,51 @@ function buildExitForm(): CRFForm {
   return createForm("exit", "Study Exit Summary", "other", fields);
 }
 
+/**
+ * Check if design/endpoint combination is supported for CRF generation
+ */
+function isSupportedDesignEndpointCombo(designId: string | undefined, endpointType: string | undefined): boolean {
+  if (!designId || !endpointType) {
+    return false;
+  }
+  
+  // Supported combinations
+  const supportedDesigns = [
+    "rct-2arm-parallel",
+    "prospective-cohort",
+    "retrospective-cohort",
+    "case-control",
+    "cross-sectional",
+    "single-arm",
+    "diagnostic-accuracy"
+  ];
+  
+  if (!supportedDesigns.includes(designId)) {
+    return false;
+  }
+  
+  // All endpoint types are supported for the above designs
+  const supportedEndpointTypes = ["binary", "continuous", "time-to-event", "diagnostic", "ordinal", "count"];
+  return supportedEndpointTypes.includes(endpointType);
+}
+
 export function buildCrfSchema(studySpec: StudySpec, sap: SAPPlan): CRFSchema {
   const forms: CRFForm[] = [];
   const warnings: string[] = [];
+
+  // Check for unsupported design/endpoint combinations
+  const isSupported = isSupportedDesignEndpointCombo(
+    studySpec.designId,
+    studySpec.primaryEndpoint?.type
+  );
+  
+  if (studySpec.designId && studySpec.primaryEndpoint && !isSupported) {
+    warnings.push(
+      `Design/endpoint combination (${studySpec.designId} with ${studySpec.primaryEndpoint.type}) ` +
+      `may not be fully supported. CRF forms generated are minimal safe forms. ` +
+      `Consult PI/statistician for design-specific CRF requirements.`
+    );
+  }
 
   forms.push(buildScreeningForm());
   forms.push(buildBaselineForm(studySpec));
@@ -463,17 +528,61 @@ export function buildCrfSchema(studySpec: StudySpec, sap: SAPPlan): CRFSchema {
   forms.push(buildDeviationForm());
   forms.push(buildExitForm());
 
-  if (!studySpec.primaryEndpoint) {
+  // Explicitly verify all primary endpoints have CRF fields
+  if (studySpec.primaryEndpoint) {
+    const primaryEndpointName = studySpec.primaryEndpoint.name;
+    const hasPrimaryField = forms.some((form) =>
+      form.fields.some((field) => field.mapsToEndpointName === primaryEndpointName)
+    );
+    
+    if (!hasPrimaryField) {
+      warnings.push(
+        `CRF schema missing explicit fields for primary endpoint "${primaryEndpointName}". ` +
+        `Creating fallback field.`
+      );
+      
+      // Create a fallback field for the primary endpoint
+      const fallbackFields = buildEndpointFields(studySpec.primaryEndpoint);
+      if (fallbackFields.length > 0) {
+        // Add to the primary outcome form if it exists, otherwise create a new form
+        const primaryOutcomeForm = forms.find((f) => f.id === "primary-outcome");
+        if (primaryOutcomeForm) {
+          primaryOutcomeForm.fields.push(...fallbackFields);
+        } else {
+          // Create a dedicated form for the primary endpoint
+          forms.push(
+            createForm(
+              "primary-endpoint-fallback",
+              `Primary Endpoint: ${primaryEndpointName}`,
+              "outcome",
+              fallbackFields
+            )
+          );
+        }
+      }
+    }
+  } else {
     warnings.push("Primary endpoint is missing; align CRF outcome fields once defined.");
   }
 
+  // Verify all secondary endpoints have fields
+  for (const secondaryEndpoint of studySpec.secondaryEndpoints) {
+    const hasField = forms.some((form) =>
+      form.fields.some((field) => field.mapsToEndpointName === secondaryEndpoint.name)
+    );
+    if (!hasField) {
+      warnings.push(`CRF schema does not yet map secondary endpoint "${secondaryEndpoint.name}".`);
+    }
+  }
+
+  // Also check SAP endpoints for consistency
   if (sap.endpoints.length > 0) {
     for (const sapEndpoint of sap.endpoints) {
       const hasField = forms.some((form) =>
         form.fields.some((field) => field.mapsToEndpointName === sapEndpoint.endpointName)
       );
       if (!hasField) {
-        warnings.push(`CRF schema does not yet map endpoint "${sapEndpoint.endpointName}".`);
+        warnings.push(`CRF schema does not yet map endpoint "${sapEndpoint.endpointName}" from SAP.`);
       }
     }
   }

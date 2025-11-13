@@ -43,7 +43,9 @@ export function buildRegulatoryChecklist(inputs: ChecklistInputs): RegulatoryChe
     })
   );
 
+  // Primary endpoint check - use StudySpec explicitly
   const primaryDefined = Boolean(studySpec.primaryEndpoint);
+  const primaryEndpointName = studySpec.primaryEndpoint?.name;
   items.push(
     checklistItem({
       id: "primary-endpoint",
@@ -51,34 +53,51 @@ export function buildRegulatoryChecklist(inputs: ChecklistInputs): RegulatoryChe
       scope: "endpoints",
       status: primaryDefined ? "ok" : "missing",
       severity: primaryDefined ? "info" : "critical",
-      notes: primaryDefined ? undefined : "Define a single primary endpoint across protocol, SAP, and CRF.",
+      notes: primaryDefined
+        ? undefined
+        : `studySpec.primaryEndpoint is undefined. Define a single primary endpoint across protocol, SAP, and CRF.`,
     })
   );
 
+  // SAP coverage check - verify primary endpoint is in SAP
+  const sapHasPrimary = primaryEndpointName
+    ? sap.endpoints.some((ep) => ep.endpointName === primaryEndpointName && ep.role === "primary")
+    : false;
   const sapReady = sap.endpoints.length > 0;
   items.push(
     checklistItem({
       id: "sap-coverage",
       label: "SAP covers all primary endpoints with deterministic methods",
       scope: "sap",
-      status: sapReady ? "ok" : "missing",
-      severity: sapReady ? "info" : "error",
-      notes: sapReady ? undefined : "Add endpoint-specific analyses before IEC review.",
+      status: sapReady && (primaryEndpointName ? sapHasPrimary : true) ? "ok" : "missing",
+      severity: sapReady && (primaryEndpointName ? sapHasPrimary : true) ? "info" : "error",
+      notes:
+        sapReady && (primaryEndpointName ? sapHasPrimary : true)
+          ? undefined
+          : primaryEndpointName
+          ? `SAP missing analysis plan for primary endpoint "${primaryEndpointName}" from studySpec.primaryEndpoint.`
+          : "Add endpoint-specific analyses before IEC review.",
     })
   );
 
+  // Sample size check - use sampleSize.status and warnings explicitly
   const sampleSizeReady = sampleSize.status === "ok";
+  const sampleSizeMessage =
+    sampleSize.status === "ok"
+      ? undefined
+      : sampleSize.status === "unsupported-design"
+      ? `Sample size calculation unsupported: ${sampleSize.warnings.join("; ") || "Design/endpoint combination not supported by deterministic engine."}`
+      : sampleSize.status === "incomplete-input"
+      ? `Sample size calculation incomplete: ${sampleSize.warnings.join("; ") || "Missing required assumptions."}`
+      : `Sample size status: ${sampleSize.status}. ${sampleSize.warnings.join("; ") || "Provide validated assumptions and numbers or acknowledge incomplete inputs to IEC."}`;
   items.push(
     checklistItem({
       id: "sample-size",
       label: "Sample size calculation documented with assumptions",
       scope: "sample-size",
       status: sampleSizeReady ? "ok" : "needs-review",
-      severity: sampleSizeReady ? "info" : "warning",
-      notes:
-        sampleSizeReady
-          ? undefined
-          : "Provide validated assumptions and numbers or acknowledge incomplete inputs to IEC.",
+      severity: sampleSizeReady ? "info" : sampleSize.status === "unsupported-design" ? "error" : "warning",
+      notes: sampleSizeMessage,
     })
   );
 
@@ -94,7 +113,13 @@ export function buildRegulatoryChecklist(inputs: ChecklistInputs): RegulatoryChe
     })
   );
 
-  const crfAligned = crf.warnings.length === 0;
+  // CRF alignment check - verify primary endpoint fields exist
+  const crfHasPrimaryField = primaryEndpointName
+    ? crf.forms.some((form) =>
+        form.fields.some((field) => field.mapsToEndpointName === primaryEndpointName)
+      )
+    : false;
+  const crfAligned = crf.warnings.length === 0 && (primaryEndpointName ? crfHasPrimaryField : true);
   items.push(
     checklistItem({
       id: "crf-alignment",
@@ -102,9 +127,51 @@ export function buildRegulatoryChecklist(inputs: ChecklistInputs): RegulatoryChe
       scope: "crf",
       status: crfAligned ? "ok" : "needs-review",
       severity: crfAligned ? "info" : "warning",
-      notes: crfAligned ? undefined : crf.warnings.join("; "),
+      notes: crfAligned
+        ? undefined
+        : primaryEndpointName && !crfHasPrimaryField
+        ? `CRF schema missing fields mapped to primary endpoint "${primaryEndpointName}" from studySpec.primaryEndpoint. ${crf.warnings.join("; ")}`
+        : crf.warnings.join("; "),
     })
   );
+
+  // Additional StudySpec completeness checks
+  if (studySpec.designId === "rct-2arm-parallel") {
+    const hasGroupLabels = studySpec.groupLabels && studySpec.groupLabels.length >= 2;
+    const hasInterventionInfo = studySpec.interventionName && studySpec.comparatorName;
+    if (!hasGroupLabels && !hasInterventionInfo) {
+      items.push(
+        checklistItem({
+          id: "rct-group-labels",
+          label: "RCT group labels or intervention/comparator names defined",
+          scope: "design",
+          status: "missing",
+          severity: "error",
+          notes: `RCT design requires studySpec.groupLabels (${studySpec.groupLabels?.length || 0} provided) or studySpec.interventionName/comparatorName to be specified.`,
+        })
+      );
+    }
+  }
+
+  // Follow-up duration check for designs that require it
+  if (
+    (studySpec.designId === "rct-2arm-parallel" ||
+      studySpec.designId === "prospective-cohort" ||
+      studySpec.designId === "retrospective-cohort") &&
+    !studySpec.followUpDuration &&
+    !studySpec.primaryEndpoint?.timeframe
+  ) {
+    items.push(
+      checklistItem({
+        id: "follow-up-duration",
+        label: "Follow-up duration specified",
+        scope: "design",
+        status: "missing",
+        severity: "warning",
+        notes: `Follow-up duration (studySpec.followUpDuration or primaryEndpoint.timeframe) should be specified for ${studySpec.designId} designs.`,
+      })
+    );
+  }
 
   const protocolWarnings = protocol.warnings.length === 0;
   items.push(
@@ -229,15 +296,15 @@ export function buildRegistryMappingSheet(
       value: studySpec.eligibility?.exclusion?.join("; "),
       source: studySpec.eligibility?.exclusion?.length ? "auto" : "pi-required",
     },
-    {
-      fieldId: "ctri_primary_outcome",
-      label: "Primary outcome",
-      value: studySpec.primaryEndpoint?.name,
-      source: studySpec.primaryEndpoint ? "auto" : "pi-required",
-      notes: studySpec.primaryEndpoint?.timeframe
-        ? `Assessment timeframe: ${studySpec.primaryEndpoint.timeframe}`
-        : undefined,
-    },
+        {
+          fieldId: "ctri_primary_outcome",
+          label: "Primary outcome",
+          value: studySpec.primaryEndpoint?.name,
+          source: studySpec.primaryEndpoint?.name ? "auto" : "pi-required",
+          notes: studySpec.primaryEndpoint?.name
+            ? `Primary endpoint: ${studySpec.primaryEndpoint.name} (${studySpec.primaryEndpoint.type})${studySpec.followUpDuration || studySpec.primaryEndpoint.timeframe ? `, assessed within ${studySpec.followUpDuration || studySpec.primaryEndpoint.timeframe}` : ""}`
+            : "Primary endpoint must be defined before CTRI registration.",
+        },
     {
       fieldId: "ctri_secondary_outcome",
       label: "Key secondary outcomes",
@@ -255,6 +322,8 @@ export function buildRegistryMappingSheet(
       notes:
         sampleSize.status === "ok"
           ? "Update if multi-centre split required; ensure consistency with protocol."
+          : sampleSize.warnings.length > 0
+          ? `Sample size calculation pending: ${sampleSize.warnings.join("; ")}. Provide confirmed sample size before registry submission.`
           : "Provide confirmed sample size before registry submission.",
     },
     {

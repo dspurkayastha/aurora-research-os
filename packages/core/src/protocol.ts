@@ -39,10 +39,23 @@ function describeObjectives(spec: StudySpec): string {
 function describeDesign(spec: StudySpec): string {
   const label = spec.designLabel ?? "proposed design";
   const setting = spec.setting ?? "recruiting centres";
-  const allocation =
-    spec.designId === "rct-2arm-parallel"
-      ? "Participants will be randomised in a 1:1 ratio with concealed allocation."
-      : "Participants will be classified according to exposure or cohort status using predefined criteria.";
+  
+  // Use groupLabels if available, otherwise fall back to generic descriptions
+  let allocation: string;
+  if (spec.designId === "rct-2arm-parallel") {
+    if (spec.groupLabels && spec.groupLabels.length >= 2) {
+      allocation = `Participants will be randomised in a 1:1 ratio to ${spec.groupLabels[0]} or ${spec.groupLabels[1]} with concealed allocation.`;
+    } else if (spec.interventionName && spec.comparatorName) {
+      allocation = `Participants will be randomised in a 1:1 ratio to ${spec.interventionName} or ${spec.comparatorName} with concealed allocation.`;
+    } else {
+      allocation = "Participants will be randomised in a 1:1 ratio with concealed allocation.";
+    }
+  } else if (spec.groupLabels && spec.groupLabels.length > 0) {
+    allocation = `Participants will be classified into groups: ${spec.groupLabels.join(", ")}.`;
+  } else {
+    allocation = "Participants will be classified according to exposure or cohort status using predefined criteria.";
+  }
+  
   const masking =
     spec.designId === "rct-2arm-parallel"
       ? "Blinding will follow site capabilities with outcome assessors masked wherever feasible."
@@ -71,8 +84,10 @@ function describeProcedures(spec: StudySpec): string {
 }
 
 function describeEndpoints(spec: StudySpec): string {
+  // Use followUpDuration if available, otherwise fall back to primaryEndpoint.timeframe
+  const timeframe = spec.followUpDuration || spec.primaryEndpoint?.timeframe;
   const primary = spec.primaryEndpoint
-    ? `${spec.primaryEndpoint.name} (${spec.primaryEndpoint.type}${spec.primaryEndpoint.timeframe ? `, assessed over ${spec.primaryEndpoint.timeframe}` : ""})`
+    ? `${spec.primaryEndpoint.name} (${spec.primaryEndpoint.type}${timeframe ? `, assessed within ${timeframe}` : ""})`
     : "Primary endpoint pending confirmation.";
   const secondary = spec.secondaryEndpoints.length
     ? `Key secondary endpoints: ${spec.secondaryEndpoints

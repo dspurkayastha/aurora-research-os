@@ -245,6 +245,8 @@ function buildEndpointPlans(
     if (plan.role === "primary" && studySpec.primaryEndpoint && endpoint.name === studySpec.primaryEndpoint.name) {
       plan.alphaAllocation = 0.05;
     }
+    // Add timeframe: use followUpDuration if available, otherwise endpoint.timeframe
+    plan.timeframe = studySpec.followUpDuration || endpoint.timeframe;
     return plan;
   });
 }
@@ -349,9 +351,20 @@ export function buildSAPPlan(studySpec: StudySpec, sampleSize: SampleSizeResult)
     warnings.push("Primary endpoint missing; confirm before finalising SAP.");
   }
 
-  if (sampleSize.status !== "ok") {
+  // Check for unsupported design/endpoint combinations
+  if (sampleSize.status === "unsupported-design") {
+    const errorMessage = sampleSize.warnings.join("; ") || 
+      "Design/endpoint combination not supported by deterministic sample size engine";
     warnings.push(
-      "Sample size assumptions incomplete or unsupported; confirm calculations before locking SAP."
+      `Sample size not auto-computed; statistician input required. Reason: ${errorMessage}. ` +
+      `SAP entries are provisional until validated sample size is provided.`
+    );
+  } else if (sampleSize.status !== "ok") {
+    const errorMessage = sampleSize.warnings.join("; ") || 
+      sampleSize.notes.join("; ") || 
+      "Sample size assumptions incomplete";
+    warnings.push(
+      `Sample size calculation pending: ${errorMessage}. Confirm calculations before locking SAP.`
     );
   }
 

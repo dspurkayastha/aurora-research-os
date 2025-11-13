@@ -243,9 +243,10 @@ function resolvePrimaryEndpoint(preSpec: PreSpec): EndpointSpec | null {
   const hintLower = preSpec.primaryOutcomeHint.toLowerCase();
   let type: EndpointSpec["type"] = "binary";
 
-  if (hintLower.includes("length of stay")) {
+  // Enhanced type detection
+  if (hintLower.includes("length of stay") || hintLower.includes("los")) {
     type = "continuous";
-  } else if (hintLower.includes("time to")) {
+  } else if (hintLower.includes("time to") || hintLower.includes("survival") || hintLower.includes("duration")) {
     type = "time-to-event";
   } else if (hintLower.includes("mortality") || hintLower.includes("death")) {
     type = "binary";
@@ -255,7 +256,12 @@ function resolvePrimaryEndpoint(preSpec: PreSpec): EndpointSpec | null {
     type = "binary";
   } else if (hintLower.includes("infection")) {
     type = "binary";
+  } else if (hintLower.includes("incidence") || hintLower.includes("prevalence") || hintLower.includes("rate")) {
+    type = "binary";
+  } else if (hintLower.includes("change") || hintLower.includes("improvement") || hintLower.includes("reduction")) {
+    type = "continuous";
   }
+  // Default to binary if type unclear - better to have an endpoint than none
 
   const endpoint: EndpointSpec = {
     name: preSpec.primaryOutcomeHint,
@@ -271,16 +277,90 @@ function resolvePrimaryEndpoint(preSpec: PreSpec): EndpointSpec | null {
 }
 
 function deriveTitle(preSpec: PreSpec): string {
-  const condition = preSpec.condition || "clinical outcomes";
-  const population = preSpec.populationDescription || "the target population";
-  return `Study on ${condition} in ${population}`.replace(/\s+/g, " ").trim();
+  // Use only structured fields - never use rawIdea
+  const parts: string[] = [];
+  
+  // Add condition if available
+  if (preSpec.condition) {
+    parts.push(preSpec.condition);
+  }
+  
+  // Add primary outcome if available (more specific than generic "study")
+  if (preSpec.primaryOutcomeHint) {
+    parts.push(preSpec.primaryOutcomeHint);
+  }
+  
+  // Add population if available
+  if (preSpec.populationDescription) {
+    parts.push(`in ${preSpec.populationDescription}`);
+  }
+  
+  // Build title from parts
+  if (parts.length === 0) {
+    return "Clinical Research Study"; // Generic fallback
+  }
+  
+  // Format: "{Condition} {Primary Outcome} Study in {Population}"
+  // Or: "{Primary Outcome} Study in {Population}" if no condition
+  // Or: "{Condition} Study in {Population}" if no outcome
+  let title = parts.join(" ");
+  
+  // Add "Study" if not already present and we have meaningful content
+  if (!title.toLowerCase().includes("study") && parts.length > 0) {
+    // Insert "Study" before "in" if population is present, otherwise at the end
+    if (preSpec.populationDescription && title.includes("in ")) {
+      title = title.replace("in ", "Study in ");
+    } else {
+      title = `${title} Study`;
+    }
+  }
+  
+  return title.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Extract value from clarifying questions for a given field.
+ * Returns the answer if found, otherwise undefined.
+ * Enforces precedence: clarifying answers override AI-parsed PreSpec fields.
+ */
+function extractFromClarifyingQuestions(
+  preSpec: PreSpec,
+  fieldName: string
+): string | undefined {
+  if (!preSpec.clarifyingQuestions) {
+    return undefined;
+  }
+  const question = preSpec.clarifyingQuestions.find(
+    (q) => q.field === fieldName && q.answer && !q.skipped
+  );
+  return question?.answer;
 }
 
 export function buildBaselineSpec(preSpec: PreSpec, designId: StudyDesignId | null): StudySpec {
   const availableDesigns = AURORA_RULEBOOK.studyDesigns;
-  let resolvedDesignId = designId || chooseDesign(preSpec);
   const notes: string[] = [];
 
+  // PRECEDENCE RULE 1: Design ID - clarifying answer > AI parsing > chooseDesign()
+  let resolvedDesignId: StudyDesignId | null = null;
+  
+  // Priority 1: Check clarifying questions
+  const designFromQuestions = extractFromClarifyingQuestions(preSpec, "designId");
+  if (designFromQuestions) {
+    // Validate that the answer is a valid design ID
+    const validDesign = availableDesigns.find((d) => d.id === designFromQuestions);
+    if (validDesign) {
+      resolvedDesignId = designFromQuestions as StudyDesignId;
+    } else {
+      notes.push(`Clarifying answer specified design "${designFromQuestions}" but it's not in rulebook.`);
+    }
+  }
+  
+  // Priority 2: Use provided designId parameter (from AI parsing or manual selection)
+  if (!resolvedDesignId) {
+    resolvedDesignId = designId || chooseDesign(preSpec);
+  }
+
+  // Validation: Require designId
   if (!resolvedDesignId) {
     notes.push("Design selection uncertain; requires human review.");
   }
@@ -302,38 +382,171 @@ export function buildBaselineSpec(preSpec: PreSpec, designId: StudyDesignId | nu
     notes.push("Diagnostic accuracy design; ensure index test and reference standard are clearly specified.");
   }
 
-  const primaryEndpoint = resolvePrimaryEndpoint(preSpec);
+  // PRECEDENCE RULE 2: Primary Endpoint - clarifying answer > AI parsing
+  let primaryEndpoint: EndpointSpec | null = null;
+  
+  // Priority 1: Check clarifying questions
+  const endpointFromQuestions = extractFromClarifyingQuestions(preSpec, "primaryOutcomeHint");
+  if (endpointFromQuestions) {
+    // Try to infer endpoint type from the answer
+    const hintLower = endpointFromQuestions.toLowerCase();
+    let type: EndpointSpec["type"] = "binary";
+    if (hintLower.includes("length of stay") || hintLower.includes("los")) {
+      type = "continuous";
+    } else if (hintLower.includes("time to") || hintLower.includes("survival") || hintLower.includes("duration")) {
+      type = "time-to-event";
+    }
+    
+    primaryEndpoint = {
+      name: endpointFromQuestions,
+      type,
+      role: "primary",
+    };
+  }
+  
+  // Priority 2: Use AI-parsed PreSpec (resolvePrimaryEndpoint)
+  if (!primaryEndpoint) {
+    primaryEndpoint = resolvePrimaryEndpoint(preSpec);
+  }
+  
+  // Validation: Require primaryEndpoint
   if (!primaryEndpoint) {
     notes.push("Primary endpoint not clearly identified; must be defined by PI.");
   }
+
+  // PRECEDENCE RULE 3: Condition - clarifying answer > AI parsing
+  const condition = extractFromClarifyingQuestions(preSpec, "condition") || preSpec.condition;
+
+  // PRECEDENCE RULE 4: Population Description - clarifying answer > AI parsing
+  const populationDescription = extractFromClarifyingQuestions(preSpec, "populationDescription") || preSpec.populationDescription;
+
+  // PRECEDENCE RULE 5: Group Labels - clarifying answer > AI parsing > derived
+  let groupLabels: string[] | undefined;
+  
+  // Priority 1: Check clarifying questions
+  const groupsFromQuestions = extractFromClarifyingQuestions(preSpec, "groupLabels");
+  if (groupsFromQuestions) {
+    groupLabels = groupsFromQuestions.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  
+  // Priority 2: Derive from intervention/comparator for RCTs
+  if (!groupLabels && resolvedDesignId === "rct-2arm-parallel") {
+    if (preSpec.interventionName && preSpec.comparatorName) {
+      groupLabels = [preSpec.interventionName, preSpec.comparatorName];
+    }
+  }
+  
+  // Validation: For RCT designs, require group labels or intervention/comparator
+  if (resolvedDesignId === "rct-2arm-parallel") {
+    const hasGroupInfo = groupLabels && groupLabels.length >= 2;
+    const hasInterventionInfo = preSpec.interventionName && preSpec.comparatorName;
+    if (!hasGroupInfo && !hasInterventionInfo) {
+      notes.push("RCT design requires group labels or intervention/comparator names to be specified.");
+    }
+  }
+
+  // PRECEDENCE RULE 6: Eligibility - clarifying answer > AI parsing (combine both)
+  const eligibilityInclusion: string[] = [];
+  const eligibilityExclusion: string[] = [];
+  
+  // Priority 1: Check clarifying questions
+  const inclusionFromQuestions = extractFromClarifyingQuestions(preSpec, "eligibility.inclusion");
+  if (inclusionFromQuestions) {
+    eligibilityInclusion.push(...inclusionFromQuestions.split(";").map((s) => s.trim()).filter(Boolean));
+  }
+  const exclusionFromQuestions = extractFromClarifyingQuestions(preSpec, "eligibility.exclusion");
+  if (exclusionFromQuestions) {
+    eligibilityExclusion.push(...exclusionFromQuestions.split(";").map((s) => s.trim()).filter(Boolean));
+  }
+  
+  // Priority 2: Add AI-parsed PreSpec eligibility hints (if not already present)
+  if (preSpec.eligibilityHints?.inclusion) {
+    for (const hint of preSpec.eligibilityHints.inclusion) {
+      if (!eligibilityInclusion.includes(hint)) {
+        eligibilityInclusion.push(hint);
+      }
+    }
+  }
+  if (preSpec.eligibilityHints?.exclusion) {
+    for (const hint of preSpec.eligibilityHints.exclusion) {
+      if (!eligibilityExclusion.includes(hint)) {
+        eligibilityExclusion.push(hint);
+      }
+    }
+  }
+
+  // PRECEDENCE RULE 7: Selected Languages - clarifying answer > AI parsing
+  let selectedLanguages: string[] | undefined;
+  const languagesFromQuestions = extractFromClarifyingQuestions(preSpec, "selectedLanguages");
+  if (languagesFromQuestions) {
+    selectedLanguages = languagesFromQuestions.split(",").map((s) => s.trim()).filter(Boolean);
+  } else if (preSpec.selectedLanguages) {
+    selectedLanguages = preSpec.selectedLanguages;
+  }
+
+  // PRECEDENCE RULE 8: Follow-up Duration - clarifying answer > primaryEndpoint.timeframe > timeframeHint
+  let followUpDuration: string | undefined;
+  
+  // Priority 1: Check clarifying questions
+  const followUpFromQuestions = extractFromClarifyingQuestions(preSpec, "followUpDuration") || 
+                                 extractFromClarifyingQuestions(preSpec, "timeframe");
+  if (followUpFromQuestions) {
+    followUpDuration = followUpFromQuestions;
+  }
+  
+  // Priority 2: Use primaryEndpoint.timeframe if available
+  if (!followUpDuration && primaryEndpoint?.timeframe) {
+    followUpDuration = primaryEndpoint.timeframe;
+  }
+  
+  // Priority 3: Use timeframeHint from PreSpec
+  if (!followUpDuration && preSpec.timeframeHint) {
+    followUpDuration = preSpec.timeframeHint;
+  }
+
+  // Build secondary endpoints from PreSpec.secondaryOutcomes
+  const secondaryEndpoints: EndpointSpec[] = (preSpec.secondaryOutcomes || []).map((outcome) => ({
+    name: outcome,
+    type: "binary", // Default type
+    role: "secondary",
+  }));
 
   const studySpec: StudySpec = {
     title: deriveTitle(preSpec),
     designId: resolvedDesignId ?? undefined,
     designLabel: designConfig?.label,
     regulatoryProfileId: AURORA_RULEBOOK.defaultRegulatoryProfileId,
-    condition: preSpec.condition,
-    populationDescription: preSpec.populationDescription,
+    condition, // Use precedence-resolved value
+    populationDescription, // Use precedence-resolved value
     setting: preSpec.setting,
     primaryEndpoint: primaryEndpoint ?? undefined,
-    secondaryEndpoints: [],
+    secondaryEndpoints,
     objectives: primaryEndpoint
       ? {
           primary: [`Evaluate ${primaryEndpoint.name} in the defined population.`],
-          secondary: [],
+          secondary: secondaryEndpoints.map((e) => `Characterise ${e.name}.`),
         }
       : { primary: [], secondary: [] },
     eligibility: {
-      inclusion: [],
-      exclusion: [],
+      inclusion: eligibilityInclusion.length > 0 ? eligibilityInclusion : undefined,
+      exclusion: eligibilityExclusion.length > 0 ? eligibilityExclusion : undefined,
     },
-    visitScheduleSummary: preSpec.timeframeHint
+    visitScheduleSummary: followUpDuration
+      ? `Planned follow-up around ${followUpDuration}.`
+      : preSpec.timeframeHint
       ? `Planned follow-up around ${preSpec.timeframeHint}.`
       : undefined,
+    followUpDuration, // Add explicit follow-up duration field
     notes,
     source: {
       fromRulebookVersion: AURORA_RULEBOOK.version,
     },
+    // Transfer new fields
+    groupLabels,
+    interventionName: preSpec.interventionName,
+    comparatorName: preSpec.comparatorName,
+    selectedLanguages, // Use precedence-resolved value
+    rawIdea: preSpec.rawIdea, // Store as metadata only
   };
 
   return studySpec;

@@ -49,6 +49,17 @@ export interface PreSpec {
   mentionsInterventionOrComparison?: boolean;
   clarifyingQuestions?: ClarifyingQuestion[];
   selectedLanguages?: string[]; // For PIS/ICF language selection
+  // Additional fields extracted by AI parsing
+  interventionName?: string;
+  comparatorName?: string;
+  secondaryOutcomes?: string[];
+  eligibilityHints?: {
+    inclusion?: string[];
+    exclusion?: string[];
+  };
+  stratificationFactors?: string[];
+  sampleSizeHint?: string;
+  studyPhaseHint?: string;
 }
 
 export type StudyDesignId = RulebookStudyDesignId;
@@ -94,9 +105,16 @@ export interface StudySpec {
     exclusion?: string[];
   };
   visitScheduleSummary?: string;
+  followUpDuration?: string; // Explicit follow-up duration (e.g., "12 months", "30 days")
   regulatoryProfileId: string;
   notes: string[];
   source: { fromRulebookVersion: string };
+  // Additional fields for complete study specification
+  groupLabels?: string[]; // For RCT arms or cohort groups (e.g., ["Emergency laparotomy", "Elective laparotomy"])
+  interventionName?: string; // Name of intervention/treatment
+  comparatorName?: string; // Name of comparator/control
+  selectedLanguages?: string[]; // Languages for PIS/ICF (from wizard)
+  rawIdea?: string; // Raw idea text - metadata only, never used in titles/content
 }
 
 export interface SampleSizeAssumptionsBase {
@@ -221,6 +239,7 @@ export interface SAPEndpointPlan {
   endpointName: string;
   role: "primary" | "key-secondary" | "secondary";
   type: EndpointType;
+  timeframe?: string; // Follow-up duration or assessment window
   estimand?: string;
   hypothesis?: string;
   alphaAllocation?: number;

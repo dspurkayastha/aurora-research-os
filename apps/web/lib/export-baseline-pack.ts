@@ -11,6 +11,7 @@ import {
   DEFAULT_TYPOGRAPHY,
   escapeXml,
   buildStylesXml,
+  buildPisIcfDraftForLanguage,
 } from "@aurora/core";
 
 const CORE_DISCLAIMER =
@@ -264,16 +265,27 @@ function buildSapDoc(baseline: BaselineBuildResult): Uint8Array {
   return createDocxDocument(`${baseline.studySpec.title} — Statistical Analysis Plan`, sections, footer);
 }
 
-function buildPisDoc(baseline: BaselineBuildResult): Uint8Array {
+function buildPisDoc(baseline: BaselineBuildResult, language?: string): Uint8Array {
+  // Use language-specific draft if language is provided
+  const pisIcfDraft = language 
+    ? buildPisIcfDraftForLanguage(baseline.studySpec, language)
+    : baseline.pisIcf;
+  
+  const languageSuffix = language && language.toLowerCase() !== "english" && language.toLowerCase() !== "en"
+    ? ` (${language})`
+    : "";
+  
   const sections: DocSection[] = [
     {
       heading: "Document Information",
       headingLevel: 2,
-      body: ["This draft aligns with ICMR consent elements and requires site customisation."],
+      body: language && language.toLowerCase() !== "english" && language.toLowerCase() !== "en"
+        ? [`This ${language} version is a placeholder. Translation required using IEC-approved process.`]
+        : ["This draft aligns with ICMR consent elements and requires site customisation."],
     },
   ];
 
-  for (const clause of baseline.pisIcf.sections) {
+  for (const clause of pisIcfDraft.sections) {
     sections.push({ 
       heading: clause.title, 
       headingLevel: 2,
@@ -282,11 +294,17 @@ function buildPisDoc(baseline: BaselineBuildResult): Uint8Array {
   }
 
   const footer = [
-    "This consent draft must be adapted to the institution's IEC-approved template.",
+    language && language.toLowerCase() !== "english" && language.toLowerCase() !== "en"
+      ? `This ${language} translation placeholder must be replaced with an IEC-approved translation.`
+      : "This consent draft must be adapted to the institution's IEC-approved template.",
     baseline.disclaimer,
     CORE_DISCLAIMER,
   ];
-  return createDocxDocument(`${baseline.studySpec.title} — Participant Information Sheet & Informed Consent Form`, sections, footer);
+  return createDocxDocument(
+    `${baseline.studySpec.title} — Participant Information Sheet & Informed Consent Form${languageSuffix}`, 
+    sections, 
+    footer
+  );
 }
 
 function buildIecDoc(baseline: BaselineBuildResult): Uint8Array {
@@ -649,14 +667,35 @@ export async function buildBaselinePackZip(baseline: BaselineBuildResult): Promi
   const files: ZipEntry[] = [
     { name: "01_Protocol.docx", data: buildProtocolDoc(baseline) },
     { name: "02_SAP.docx", data: buildSapDoc(baseline) },
-    { name: "03_PIS_ICF.docx", data: buildPisDoc(baseline) },
+  ];
+  
+  // Generate PIS/ICF files for each selected language
+  const selectedLanguages = baseline.studySpec.selectedLanguages || [];
+  if (selectedLanguages.length === 0) {
+    // Default to English if no languages specified
+    files.push({ name: "03_PIS_ICF_English.docx", data: buildPisDoc(baseline, "English") });
+  } else {
+    // Generate one file per language
+    for (const language of selectedLanguages) {
+      const langCode = language.toLowerCase() === "english" || language.toLowerCase() === "en"
+        ? "English"
+        : language;
+      files.push({ 
+        name: `03_PIS_ICF_${langCode}.docx`, 
+        data: buildPisDoc(baseline, language) 
+      });
+    }
+  }
+  
+  // Continue with remaining files
+  files.push(
     { name: "04_IEC_Cover_Note.docx", data: buildIecDoc(baseline) },
     { name: "05_CRF_Form.docx", data: buildCrfFormDoc(baseline) },
     { name: "06_CRF_Spec.json", data: Buffer.from(buildCrfJson(baseline), "utf8") },
     { name: "07_Registry_Mapping.csv", data: Buffer.from(buildRegistryCsv(baseline.registryMapping.fields), "utf8") },
     { name: "08_Regulatory_Checklist.md", data: Buffer.from(buildRegulatoryChecklistMarkdown(baseline), "utf8") },
-    { name: "09_Literature_Plan.md", data: Buffer.from(buildLiteratureMarkdown(baseline), "utf8") },
-  ];
+    { name: "09_Literature_Plan.md", data: Buffer.from(buildLiteratureMarkdown(baseline), "utf8") }
+  );
 
   return createZip(files);
 }
